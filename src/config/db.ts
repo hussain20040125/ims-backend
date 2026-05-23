@@ -1,0 +1,124 @@
+import mongoose from 'mongoose';
+import dotenv from 'dotenv';
+import bcrypt from 'bcryptjs';
+import { User } from '../models/index.js';
+
+dotenv.config();
+
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://admin:12345@ac-awlxxa7-shard-00-00.wbswac0.mongodb.net:27017,ac-awlxxa7-shard-00-01.wbswac0.mongodb.net:27017,ac-awlxxa7-shard-00-02.wbswac0.mongodb.net:27017/ims?ssl=true&replicaSet=atlas-sjxx6b-shard-0&authSource=admin&retryWrites=true&w=majority&appName=Cluster0';
+const ALLOWED_DOMAIN = (process.env.ALLOWED_DOMAIN || 'neotericgrp.in').toLowerCase().trim();
+
+export async function connectDB() {
+  try {
+    if (!MONGODB_URI || MONGODB_URI.includes('localhost')) {
+      console.warn('WARNING: Using default local MongoDB URI. This will likely fail in the cloud environment.');
+      console.warn('Please set MONGODB_URI in your environment variables (Secrets panel).');
+    }
+    
+    await mongoose.connect(MONGODB_URI);
+    console.log('Connected to MongoDB');
+
+    // Ensure demo users exist
+    try {
+      const password = await bcrypt.hash('password123', 10);
+      
+      const demoUsers = [
+        { 
+          name: 'Hussain Khan', 
+          email: 'hussain@neotericgrp.in', 
+          password, 
+          role: 'Super Admin',
+          isActive: true,
+          permissions: []
+        },
+        { 
+          name: 'Super Admin', 
+          email: `superadmin@${ALLOWED_DOMAIN}`, 
+          password, 
+          role: 'Super Admin',
+          isActive: true,
+          permissions: [] // Rely on role permissions
+        },
+        { 
+          name: 'System Admin', 
+          email: `admin@${ALLOWED_DOMAIN}`, 
+          password, 
+          role: 'admin',
+          isActive: true,
+          permissions: []
+        },
+        { 
+          name: 'Manager User', 
+          email: `manager@${ALLOWED_DOMAIN}`, 
+          password, 
+          role: 'manager',
+          isActive: true,
+          permissions: []
+        },
+        { 
+          name: 'Staff User', 
+          email: `staff@${ALLOWED_DOMAIN}`, 
+          password, 
+          role: 'staff',
+          isActive: true,
+          permissions: []
+        },
+      ];
+
+      for (const demoUser of demoUsers) {
+        console.log(`[SEED] Ensuring user: ${demoUser.email} with role: ${demoUser.role}`);
+        const result = await User.findOneAndUpdate(
+          { email: demoUser.email },
+          { $set: demoUser },
+          { upsert: true, new: true }
+        );
+        console.log(`[SEED] Result for ${demoUser.email}: ID ${result._id}, HasPassword: ${!!result.password}`);
+      }
+
+      // Seed initial role permissions for Super Admin so they aren't locked out if we remove the bypass
+      const RolePermission = mongoose.model('RolePermission');
+      const allPerms = [
+        'VIEW_DASHBOARD', 'MANAGE_USERS', 'VIEW_REPORTS', 'VIEW_AUDIT_LOGS', 'VIEW_PUBLIC_PORTAL',
+        'VIEW_CATALOGUE', 'CREATE_CATALOGUE', 'EDIT_CATALOGUE', 'DELETE_CATALOGUE',
+        'VIEW_SUPPLIERS', 'CREATE_SUPPLIER', 'EDIT_SUPPLIER', 'DELETE_SUPPLIER',
+        'VIEW_INVENTORY', 'CREATE_INVENTORY', 'EDIT_INVENTORY', 'DELETE_INVENTORY',
+        'VIEW_MATERIAL_PLAN', 'CREATE_MATERIAL_PLAN', 'EDIT_MATERIAL_PLAN', 'DELETE_MATERIAL_PLAN',
+        'VIEW_MATERIAL_REQUIREMENT', 'CREATE_MATERIAL_REQUIREMENT', 'EDIT_MATERIAL_REQUIREMENT', 'DELETE_MATERIAL_REQUIREMENT', 'APPROVE_MATERIAL_REQUIREMENT',
+        'VIEW_QUOTATIONS', 'CREATE_QUOTATION', 'EDIT_QUOTATION', 'DELETE_QUOTATION', 'APPROVE_QUOTATION',
+        'VIEW_PURCHASE_ORDERS', 'CREATE_PURCHASE_ORDER', 'EDIT_PURCHASE_ORDER', 'DELETE_PURCHASE_ORDER', 'APPROVE_PURCHASE_ORDER_L1', 'APPROVE_PURCHASE_ORDER_L2', 'APPROVE_PURCHASE_ORDER_L3', 'REJECT_PURCHASE_ORDER',
+        'VIEW_GRN', 'CREATE_GRN', 'EDIT_GRN', 'DELETE_GRN',
+        'VIEW_INWARD', 'CREATE_INWARD', 'EDIT_INWARD', 'DELETE_INWARD',
+        'VIEW_OUTWARD', 'CREATE_OUTWARD', 'EDIT_OUTWARD', 'DELETE_OUTWARD',
+        'VIEW_INWARD_RETURN', 'CREATE_INWARD_RETURN', 'EDIT_INWARD_RETURN', 'DELETE_INWARD_RETURN',
+        'VIEW_OUTWARD_RETURN', 'CREATE_OUTWARD_RETURN', 'EDIT_OUTWARD_RETURN', 'DELETE_OUTWARD_RETURN',
+        'VIEW_TRANSFER_INWARD', 'CREATE_TRANSFER_INWARD', 'EDIT_TRANSFER_INWARD', 'DELETE_TRANSFER_INWARD',
+        'VIEW_TRANSFER_OUTWARD', 'CREATE_TRANSFER_OUTWARD', 'EDIT_TRANSFER_OUTWARD', 'DELETE_TRANSFER_OUTWARD',
+        'VIEW_WRITE_OFFS', 'CREATE_WRITE_OFF', 'EDIT_WRITE_OFF', 'DELETE_WRITE_OFF', 'APPROVE_WRITE_OFF',
+        'VIEW_STOCK_CHECK', 'CREATE_STOCK_CHECK', 'APPROVE_STOCK_CHECK', 'VIEW_STOCK_CHECK_REPORTS', 'DELETE_STOCK_CHECK_REPORT',
+        'VIEW_ACCOUNTS', 'VERIFY_BILL', 'REJECT_BILL', 'MAKE_PAYMENT', 'VIEW_PAYMENTS',
+        'VIEW_ARCHIVE', 'RESTORE_ARCHIVE'
+      ];
+
+      await RolePermission.findOneAndUpdate(
+        { role: 'Super Admin' },
+        { $set: { permissions: allPerms } },
+        { upsert: true }
+      );
+      
+      // Also for admin to have a baseline
+      await RolePermission.findOneAndUpdate(
+        { role: 'admin' },
+        { $set: { permissions: ['VIEW_DASHBOARD', 'MANAGE_USERS', 'VIEW_INVENTORY'] } },
+        { upsert: true }
+      );
+
+    } catch (seedError) {
+      console.error('Failed to seed demo users:', seedError);
+    }
+  } catch (error) {
+    console.error('CRITICAL: MongoDB connection failed.');
+    console.error('Error details:', error instanceof Error ? error.message : error);
+    console.error('Please ensure MONGODB_URI is correctly set in your environment variables.');
+    console.error('If you are using a local URI (127.0.0.1), it will not work in this environment.');
+  }
+}
