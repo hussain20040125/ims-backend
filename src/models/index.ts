@@ -136,7 +136,7 @@ const POSchema = new Schema({
   supplier: String,
   items: [POLineItemSchema],
   totalValue: Number,
-  status: { type: String, enum: ["Approved", "Pending", "Pending GRN", "Pending L1", "Pending L2", "Pending L3", "Fulfilled", "Blocked", "Draft", "GRN Pending", "GRN Fulfilled", "GRN Variance", "Ready for Payment", "PO Closed"], default: "Draft" },
+  status: { type: String, enum: ["Approved", "Cancelled", "Pending", "Pending GRN", "Pending L1", "Pending L2", "Pending L3", "Fulfilled", "Blocked", "Draft", "GRN Pending", "GRN Fulfilled", "GRN Variance", "Ready for Payment", "PO Closed"], default: "Draft" },
   approvalL1: { type: String, enum: ["N/A", "Pending", "Approved"], default: "Pending" },
   approvalL2: { type: String, enum: ["N/A", "Pending", "Approved"], default: "Pending" },
   approvalL3: { type: String, enum: ["N/A", "Pending", "Approved"], default: "Pending" },
@@ -229,6 +229,10 @@ const POSchema = new Schema({
     }
   },
   auditTrail: [Schema.Types.Mixed],
+  // Cancellation fields (set when AGM cancels an approved PO)
+  cancelNote: String,
+  cancelledBy: String,
+  cancelledAt: String,
 }, { timestamps: true });
 
 POSchema.index({ id: 1 });
@@ -597,6 +601,11 @@ const SettingsSchema = new Schema({
     gstin: String,
     address: String
   }],
+  appName: { type: String, default: 'Garden City' },
+  logoUrl: { type: String, default: '' },
+  faviconUrl: { type: String, default: '' },
+  themeColor: { type: String, default: '#F97316' },
+  fontFamily: { type: String, default: 'Inter' }
 }, { timestamps: true });
 
 export const Settings = mongoose.model('Settings', SettingsSchema);
@@ -688,6 +697,7 @@ const QuotationItemSchema = new Schema({
   rate: { type: Number, required: true },
   gstPct: Number,
   gstType: { type: String, enum: ["Inclusive", "Exclusive"] },
+  approved: { type: Boolean, default: false }
 });
 
 const QuotationSchema = new Schema({

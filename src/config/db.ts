@@ -6,6 +6,7 @@ import { User } from '../models/index.js';
 dotenv.config();
 
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://admin:12345@ac-awlxxa7-shard-00-00.wbswac0.mongodb.net:27017,ac-awlxxa7-shard-00-01.wbswac0.mongodb.net:27017,ac-awlxxa7-shard-00-02.wbswac0.mongodb.net:27017/ims?ssl=true&replicaSet=atlas-sjxx6b-shard-0&authSource=admin&retryWrites=true&w=majority&appName=Cluster0';
+// const MONGODB_URI = process.env.MONGO_LOCAL || 'mongodb://localhost:27017/IMS_Local';
 const ALLOWED_DOMAIN = (process.env.ALLOWED_DOMAIN || 'neotericgrp.in').toLowerCase().trim();
 
 export async function connectDB() {

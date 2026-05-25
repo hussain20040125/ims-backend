@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { PurchaseOrder } from '../models/index.js';
+import { PurchaseOrder, Quotation, MaterialRequirement } from '../models/index.js';
 import { authenticate, serverHasPermission } from '../middleware/auth.middleware.js';
 import { getRolesWithPermission, createNotification } from '../utils/notification.js';
 import { triggerN8nWebhook } from '../utils/webhook.js';
@@ -65,6 +65,97 @@ router.post('/', authenticate, async (req: any, res) => {
     res.json({ success: true, data: item });
   } catch (error: any) {
     console.error('Error creating PO:', error);
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+// Cancel PO — only AGM (or Super Admin) can cancel an Approved PO
+router.put('/:id/cancel', authenticate, async (req: any, res) => {
+  try {
+    const { cancelNote } = req.body;
+
+    if (!cancelNote || !String(cancelNote).trim()) {
+      return res.status(400).json({ success: false, message: 'Cancellation note is required' });
+    }
+
+    // Role check: only AGM or Super Admin
+    const roleLower = (req.user.role || '').toLowerCase().trim();
+    const isSuperAdmin = ['super admin', 'superadmin', 'admin'].includes(roleLower);
+    const isAGM = roleLower === 'agm';
+    if (!isSuperAdmin && !isAGM) {
+      return res.status(403).json({ success: false, message: 'Only AGM can cancel approved Purchase Orders' });
+    }
+
+    // Verify PO exists and is Approved
+    const po = await PurchaseOrder.findOne({ id: req.params.id });
+    if (!po) return res.status(404).json({ success: false, message: 'Purchase Order not found' });
+    if ((po as any).status !== 'Approved') {
+      return res.status(400).json({ success: false, message: `PO is currently "${(po as any).status}". Only Approved POs can be cancelled.` });
+    }
+
+    const cancelledAt = new Date().toISOString();
+
+    // Update PO to Cancelled
+    await PurchaseOrder.findOneAndUpdate(
+      { id: req.params.id },
+      { status: 'Cancelled', cancelNote: String(cancelNote).trim(), cancelledBy: req.user.name, cancelledAt }
+    );
+
+    // Find and reset the linked Quotation + MR
+    let quotationReset = false;
+    if ((po as any).mrId) {
+      const mr = await (MaterialRequirement as any).findOne({ id: (po as any).mrId });
+      if (mr) {
+        // Find quotation ID: prefer specific category match, fall back to MR-level approvedQuotationId
+        let quotationId: string | undefined = mr.approvedQuotationId;
+        if (!quotationId && Array.isArray(mr.approvals) && mr.approvals.length > 0) {
+          const match = mr.approvals.find((a: any) => a.category === (po as any).workType);
+          if (match) quotationId = match.quotationId;
+        }
+
+        if (quotationId) {
+          const newToken = `QT-TOKEN-${quotationId}-${Date.now()}`;
+          await (Quotation as any).findOneAndUpdate(
+            { id: quotationId },
+            { status: 'Pending', token: newToken }
+          );
+          quotationReset = true;
+          broadcast({ type: 'DATA_UPDATED', path: 'quotations' });
+        }
+
+        // Reset MR approval
+        await (MaterialRequirement as any).findOneAndUpdate(
+          { id: (po as any).mrId },
+          { status: 'Store Pending', $unset: { approvedQuotationId: '', approvedSupplier: '' } }
+        );
+        broadcast({ type: 'DATA_UPDATED', path: 'material-requirements' });
+      }
+    }
+
+    broadcast({ type: 'DATA_UPDATED', path: 'pos' });
+
+    await createNotification({
+      message: `PO ${(po as any).id} cancelled by ${req.user.name}. Reason: ${String(cancelNote).trim()}`,
+      severity: 'warning',
+      path: 'pos',
+      senderId: req.user._id,
+    });
+
+    // n8n webhook
+    await triggerN8nWebhook('PO_CANCELLED', {
+      poId: (po as any).id,
+      cancelledBy: req.user.name,
+      cancelNote: String(cancelNote).trim(),
+      quotationReset,
+    });
+
+    res.json({
+      success: true,
+      message: `PO cancelled successfully${quotationReset ? '. Linked quotation reset to Pending.' : ''}`,
+      data: { id: req.params.id, cancelledAt },
+    });
+  } catch (error: any) {
+    console.error('Error cancelling PO:', error);
     res.status(400).json({ success: false, message: error.message });
   }
 });
