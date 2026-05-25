@@ -705,6 +705,15 @@ const QuotationSchema = new Schema({
   token: { type: String, unique: true, sparse: true },
   status: { type: String, enum: ["Pending", "Approved", "Rejected"], default: "Pending" },
   totalAmount: Number,
+  freightAmount: Number,
+  freightGstPct: Number,
+  freightGstType: { type: String, enum: ["Inclusive", "Exclusive"] },
+  loadingAmount: Number,
+  loadingGstPct: Number,
+  loadingGstType: { type: String, enum: ["Inclusive", "Exclusive"] },
+  unloadingAmount: Number,
+  unloadingGstPct: Number,
+  unloadingGstType: { type: String, enum: ["Inclusive", "Exclusive"] },
   date: { type: String, default: () => new Date().toISOString().split('T')[0] },
 }, { timestamps: true });
 

@@ -32,6 +32,7 @@ import stockCheckRoutes from "./routes/stockCheck.routes.js";
 import settingRoutes from "./routes/setting.routes.js";
 import notificationRoutes from "./routes/notification.routes.js";
 import writeoffRoutes from "./routes/writeoff.routes.js";
+import publicRoutes from "./routes/public.routes.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -76,6 +77,7 @@ app.use("/api/stock-check", stockCheckRoutes);
 app.use("/api", settingRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/writeoffs", writeoffRoutes);
+app.use("/api/public", publicRoutes);
 
 // Incoming Webhook (public)
 app.post("/api/webhook/n8n", async (req, res) => {
@@ -141,3 +143,9 @@ server.listen(PORT, () => {
 });
 // Nodemon reloaded database configuration
 
+
+// Trigger nodemon restart
+
+// Trigger nodemon restart 2
+
+// Restart nodemon 3
