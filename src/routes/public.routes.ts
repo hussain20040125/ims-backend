@@ -2,6 +2,7 @@ import { Router } from "express";
 import { SupplierModel, MaterialRequirement, Quotation } from "../models/index.js";
 import { getNextSequence } from "../utils/sequence.js";
 import { broadcast } from "../utils/broadcaster.js";
+import { getRolesWithPermission, createNotification } from "../utils/notification.js";
 
 const router = Router();
 
@@ -69,6 +70,38 @@ router.post("/quotation", async (req, res) => {
     
     res.json({ success: true, data: quotation });
   } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+// POST /api/public/material-requirement
+router.post("/material-requirement", async (req, res) => {
+  try {
+    const year = new Date().getFullYear();
+    const seq = await getNextSequence("MR");
+    const customId = `MR-${year}-${seq}`;
+
+    const requirement = await MaterialRequirement.create({
+      ...req.body,
+      id: customId,
+      mrNumber: customId,
+      status: req.body.status || 'Store Pending',
+      date: req.body.date || new Date().toISOString()
+    });
+
+    broadcast({ type: 'DATA_UPDATED', path: 'material-requirements' });
+
+    const storeRoles = await getRolesWithPermission('APPROVE_MR_STORE');
+    await createNotification({
+      message: `New Material Requirement ${requirement.id} received from Public Portal for project ${requirement.project}. Store approval required.`,
+      severity: 'warning',
+      path: 'material-requirements',
+      targetRoles: storeRoles
+    });
+
+    res.json({ success: true, data: requirement });
+  } catch (error: any) {
+    console.error('Error creating public material requirement:', error);
     res.status(400).json({ success: false, message: error.message });
   }
 });
