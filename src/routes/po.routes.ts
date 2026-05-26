@@ -21,8 +21,17 @@ router.post('/', authenticate, async (req: any, res) => {
     const customId = `PO-${year}-${seq}`;
 
     const data = { ...req.body };
-    const totalValue = data.items?.reduce((sum: number, item: any) => sum + (item.totalWithGST || 0), 0) || 0;
-    
+    // Helper: calculate charge total with GST
+    const calcCharge = (amt: number, pct: number, type: string) => {
+      if (!amt) return 0;
+      return type === "Exclusive" ? amt * (1 + pct / 100) : amt;
+    };
+    const itemsTotal = data.items?.reduce((sum: number, item: any) => sum + (item.totalWithGST || 0), 0) || 0;
+    const freightTotal = calcCharge(data.freightAmount || 0, data.freightGstPct || 0, data.freightGstType || "Exclusive");
+    const loadingTotal = calcCharge(data.loadingAmount || 0, data.loadingGstPct || 0, data.loadingGstType || "Exclusive");
+    const unloadingTotal = calcCharge(data.unloadingAmount || 0, data.unloadingGstPct || 0, data.unloadingGstType || "Exclusive");
+    const totalValue = itemsTotal + freightTotal + loadingTotal + unloadingTotal;
+
     const item = await PurchaseOrder.create({
       ...data,
       id: customId,

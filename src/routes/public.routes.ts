@@ -44,6 +44,16 @@ router.post("/quotation", async (req, res) => {
   try {
     const data = req.body;
     
+    if (data.mrId) {
+      const mr = await MaterialRequirement.findOne({ id: data.mrId });
+      if (!mr) {
+        return res.status(404).json({ success: false, message: "Material Requirement not found" });
+      }
+      if (mr.quotationLinkActive === false) {
+        return res.status(400).json({ success: false, message: "This quotation link has been deactivated by the AGM." });
+      }
+    }
+    
     const year = new Date().getFullYear();
     const seq = await getNextSequence("QT");
     const customId = `QT-${year}-${seq}`;

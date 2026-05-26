@@ -110,11 +110,14 @@ const POLineItemSchema = new Schema({
   unit: String,
   rate: Number,
   gstPct: Number,
+  gstType: { type: String, enum: ["Inclusive", "Exclusive"], default: "Exclusive" },
   total: Number,
   totalWithGST: Number,
   currentStock: Number,
   category: String,
   requirementQty: Number,
+  uqc: String,
+  condition: String,
 });
 
 const PaymentTimelineSchema = new Schema({
@@ -233,6 +236,16 @@ const POSchema = new Schema({
   cancelNote: String,
   cancelledBy: String,
   cancelledAt: String,
+  // Other Charges (Freight / Loading / Unloading)
+  freightAmount: { type: Number, default: 0 },
+  freightGstPct: { type: Number, default: 0 },
+  freightGstType: { type: String, enum: ["Inclusive", "Exclusive"], default: "Exclusive" },
+  loadingAmount: { type: Number, default: 0 },
+  loadingGstPct: { type: Number, default: 0 },
+  loadingGstType: { type: String, enum: ["Inclusive", "Exclusive"], default: "Exclusive" },
+  unloadingAmount: { type: Number, default: 0 },
+  unloadingGstPct: { type: Number, default: 0 },
+  unloadingGstType: { type: String, enum: ["Inclusive", "Exclusive"], default: "Exclusive" },
 }, { timestamps: true });
 
 POSchema.index({ id: 1 });
@@ -653,7 +666,8 @@ const MaterialRequirementSchema = new Schema({
     quotationId: String,
     supplierName: String,
     approvedAt: { type: Date, default: Date.now }
-  }]
+  }],
+  quotationLinkActive: { type: Boolean, default: true }
 }, { timestamps: true });
 
 MaterialRequirementSchema.index({ id: 1 });
