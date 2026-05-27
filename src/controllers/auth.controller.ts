@@ -6,27 +6,15 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 
 export class AuthController {
 
-  // ── POST /api/auth/login  →  validate credentials, send OTP ──────────────
+  // ── POST /api/auth/login  →  validate credentials, issue JWT ────────────
   static async login(req: Request, res: Response) {
     try {
       const { email, password } = req.body;
       const result = await AuthService.login(email, password);
-      // Returns { otpRequired: true, email } — no token yet
-      res.json({ success: true, data: result });
-    } catch (error: any) {
-      res.status(401).json({ success: false, message: error.message });
-    }
-  }
-
-  // ── POST /api/auth/verify-otp  →  validate OTP, issue JWT ────────────────
-  static async verifyOtp(req: Request, res: Response) {
-    try {
-      const { email, otp } = req.body;
-      const result = await AuthService.verifyOtp(email, otp);
 
       res.cookie('token', result.token, {
         httpOnly: true,
-        secure:   IS_PROD,        // HTTPS only in production
+        secure:   IS_PROD,
         sameSite: 'none',
         maxAge:   24 * 60 * 60 * 1000,
       });

@@ -20,9 +20,17 @@ const getTransporter = (): Transporter => {
 
 /**
  * Sends a branded HTML email containing the 6-digit OTP.
- * Throws if the SMTP transport fails (caller is responsible for catching).
+ * If SMTP credentials are not configured (dev environment), logs the OTP to console instead of throwing.
  */
 export const sendOTPEmail = async (to: string, otp: string, name: string): Promise<void> => {
+  // Dev fallback: if SMTP is not configured, print OTP to console so login still works
+  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+    console.log('\n╔════════════════════════════════════════╗');
+    console.log(`║  [DEV] OTP for ${to}`);
+    console.log(`║  Code: ${otp}  (expires in 10 min)`);
+    console.log('╚════════════════════════════════════════╝\n');
+    return;
+  }
   const fromAddress = `"Neoteric IMS" <${process.env.SMTP_USER}>`;
   const year = new Date().getFullYear();
 

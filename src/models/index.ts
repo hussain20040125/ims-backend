@@ -18,13 +18,13 @@ const InventorySchema = new Schema({
   lastProject: String,
 }, { timestamps: true });
 
-InventorySchema.pre('save', function(next) {
+// Mongoose 9 / kareem 3.x: use async (promise-style) hook — no 'next' callback is injected anymore.
+InventorySchema.pre('save', async function() {
   const inv = this as any;
   if (inv.liveStock !== undefined) {
     inv.availableQty = Math.max(0, (inv.liveStock || 0) - (inv.allocatedQty || 0));
     inv.totalQty = (inv.liveStock || 0) + (inv.issuedQty || 0);
   }
-  (next as any)();
 });
 
 InventorySchema.index({ sku: 1 });

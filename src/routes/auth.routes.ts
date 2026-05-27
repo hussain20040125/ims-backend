@@ -4,11 +4,8 @@ import { authenticate }   from '../middleware/auth.middleware.js';
 
 const router = Router();
 
-// Step 1 – validate credentials → OTP sent to email (no JWT yet)
-router.post('/login',      AuthController.login);
-
-// Step 2 – submit OTP → receive JWT
-router.post('/verify-otp', AuthController.verifyOtp);
+// Validate credentials → issue JWT immediately
+router.post('/login', AuthController.login);
 
 // Session management
 router.post('/logout', AuthController.logout);
