@@ -34,6 +34,7 @@ import notificationRoutes from "./routes/notification.routes.js";
 import writeoffRoutes from "./routes/writeoff.routes.js";
 import publicRoutes from "./routes/public.routes.js";
 import uploadRoutes from "./routes/upload.routes.js";
+import { encryptionMiddleware } from "./middleware/encrypt.middleware.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -53,11 +54,13 @@ app.use(cors({
   ],
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  allowedHeaders: ["Content-Type", "Authorization", "x-enc"]
 }));
 app.use(express.json());
 app.use(cookieParser());
 app.use(morgan("dev"));
+// AES-256 request decrypt / response encrypt (opt-in via "x-enc: 1" header)
+app.use(encryptionMiddleware);
 
 // Serve static uploads
 const uploadDir = path.join(process.cwd(), "uploads");

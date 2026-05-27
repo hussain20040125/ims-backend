@@ -58,10 +58,10 @@ export const Catalogue = mongoose.model('Catalogue', CatalogueSchema);
 // Supplier Model
 const SupplierSchema = new Schema({
   id: { type: String, required: true, unique: true },
-  email: { type: String, required: true, unique: true },
-  companyName: { type: String, required: true },
+  email: { type: String, required: true },
+  companyName: { type: String, required: true, unique: true },
   ownerName: { type: String, required: true },
-  mobile: { type: String, required: true, unique: true },
+  mobile: { type: String, required: true },
   altMobile: String,
   website: String,
   address: { type: String, required: true },
@@ -561,13 +561,17 @@ export const AuditLog = mongoose.model('AuditLog', AuditLogSchema);
 
 // User Model
 const UserSchema = new Schema({
-  name: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  role: { type: String, default: "staff" },
+  name:        { type: String, required: true },
+  email:       { type: String, required: true, unique: true },
+  password:    { type: String, required: true },
+  role:        { type: String, default: 'staff' },
   permissions: { type: [String], default: [] },
-  isActive: { type: Boolean, default: true },
-  status: { type: String, enum: ["Active", "Inactive"], default: "Active" },
+  isActive:    { type: Boolean, default: true },
+  status:      { type: String, enum: ['Active', 'Inactive'], default: 'Active' },
+  // ── OTP / Two-factor login ──────────────────────────────────────────────
+  otpHash:     { type: String,  select: false },   // bcrypt hash – never returned by default
+  otpExpiry:   { type: Date,    select: false },   // 10-min window
+  otpAttempts: { type: Number,  default: 0, select: false },
 }, { timestamps: true });
 
 UserSchema.index({ email: 1 });
@@ -744,7 +748,7 @@ const QuotationSchema = new Schema({
 QuotationSchema.pre('save', async function() {
   const q = this as any;
   if (!q.token) {
-    q.token = `QT-TOKEN-${q.id || Math.random().toString(36).substr(2, 9)}-${Date.now()}`;
+    q.token = `QT-TOKEN-${q.id || Math.random().toString(36).slice(2, 11)}-${Date.now()}`;
   }
 });
 

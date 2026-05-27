@@ -224,10 +224,17 @@ export const createCrudRoutes = (
       
       res.json({ success: true, data: item });
     } catch (error: any) {
+      // MongoDB duplicate key error
+      if (error.code === 11000) {
+        const field = Object.keys(error.keyValue || {})[0] || 'name';
+        const value = error.keyValue?.[field] || '';
+        const label = field === 'companyName' || field === 'name' ? 'Company name' : field;
+        return res.status(400).json({ success: false, message: `${label} "${value}" already exists. Please use a different name.` });
+      }
       res.status(400).json({ success: false, message: error.message });
     }
   });
-  
+
   // PUT (update)
   router.put('/:id', authenticate, async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -452,10 +459,17 @@ export const createCrudRoutes = (
       
       res.json({ success: true, data: item });
     } catch (error: any) {
+      // MongoDB duplicate key error
+      if (error.code === 11000) {
+        const field = Object.keys(error.keyValue || {})[0] || 'name';
+        const value = error.keyValue?.[field] || '';
+        const label = field === 'companyName' || field === 'name' ? 'Company name' : field;
+        return res.status(400).json({ success: false, message: `${label} "${value}" already exists. Please use a different name.` });
+      }
       res.status(400).json({ success: false, message: error.message });
     }
   });
-  
+
   // DELETE
   router.delete('/:id', authenticate, async (req: AuthenticatedRequest, res: Response) => {
     try {
