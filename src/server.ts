@@ -47,14 +47,27 @@ connectDB();
 initBroadcaster(server);
 
 // Middleware
+const ALLOWED_ORIGINS = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "https://inventory-management-system-v1-fron.vercel.app",
+  "https://inventory-management-system--v1.vercel.app",
+  // Extra origins from env (comma-separated) — set on Render dashboard
+  ...(process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
+    : []),
+];
+
 app.use(cors({
-  origin: [
-    "http://localhost:5173",
-    "https://inventory-management-system-v1-fron.vercel.app"
-  ],
+  origin: (origin, callback) => {
+    // Allow server-to-server / Postman requests (no Origin header)
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    callback(new Error(`CORS: origin "${origin}" not allowed`));
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-  allowedHeaders: ["Content-Type", "Authorization", "x-enc"]
+  allowedHeaders: ["Content-Type", "Authorization", "x-enc"],
 }));
 app.use(express.json());
 app.use(cookieParser());
