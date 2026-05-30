@@ -9,6 +9,7 @@ import {
   Outward,
   Transaction,
   PurchaseOrder,
+  GRN,
 } from "../models/index.js";
 import { getNextSequence } from "../utils/sequence.js";
 import { broadcast } from "../utils/broadcaster.js";
@@ -247,7 +248,7 @@ router.get("/tracking/:id", async (req, res) => {
       po = await PurchaseOrder.findOne({ id: queryId }).lean();
       if (po?.mrId) mr = await MaterialRequirement.findOne({ id: po.mrId }).lean();
     } else if (queryId.startsWith('GRN-')) {
-      const grn = await Inventory.findOne({ id: queryId, transactionType: 'GRN' }).lean();
+      const grn = await GRN.findOne({ id: queryId }).lean();
       if (grn) {
         if (grn.poId) {
           po = await PurchaseOrder.findOne({ id: grn.poId }).lean();
