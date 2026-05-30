@@ -8,7 +8,7 @@ const router = Router();
 router.post('/login', AuthController.login);
 
 // Session management
-router.post('/logout', AuthController.logout);
+router.post('/logout', authenticate, AuthController.logout);
 router.get('/me',  authenticate, AuthController.me);
 
 export default router;

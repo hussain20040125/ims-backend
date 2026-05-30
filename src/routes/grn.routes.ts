@@ -5,6 +5,7 @@ import { authenticate, serverHasPermission } from '../middleware/auth.middleware
 import { getRolesWithPermission, createNotification } from '../utils/notification.js';
 import { triggerN8nWebhook, checkAndFireLowStockWebhook } from '../utils/webhook.js';
 import { broadcast } from '../utils/broadcaster.js';
+import { logAudit } from '../utils/audit.js';
 
 const router = Router();
 
@@ -235,6 +236,7 @@ router.post('/', authenticate, async (req: any, res) => {
     }
 
     await session.commitTransaction();
+    logAudit(req.user, 'CREATE', 'GRN', grn[0].id, { poId: grnData.poId, supplier: grnData.supplier, project: grnData.project });
     broadcast({ type: 'DATA_UPDATED', path: 'grn' });
     broadcast({ type: 'DATA_UPDATED', path: 'inward' });
     broadcast({ type: 'DATA_UPDATED', path: 'transactions' });

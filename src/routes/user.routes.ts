@@ -5,6 +5,7 @@ import { User } from '../models/index.js';
 import { authenticate, serverHasPermission } from '../middleware/auth.middleware.js';
 import { broadcast } from '../utils/broadcaster.js';
 import { triggerN8nWebhook } from '../utils/webhook.js';
+import { logAudit } from '../utils/audit.js';
 
 const router = Router();
 
@@ -36,6 +37,7 @@ router.post('/', authenticate, async (req: any, res) => {
       role: userCount === 0 ? 'Super Admin' : (rest.role || 'staff')
     });
     broadcast({ type: 'DATA_UPDATED', path: 'users' });
+    logAudit(req.user, 'CREATE', 'User', user._id.toString(), { name: user.name, email: user.email, role: user.role });
 
     await triggerN8nWebhook('USER_CREATE', {
       userId: user._id.toString(),
@@ -64,6 +66,7 @@ router.patch('/:id', authenticate, async (req: any, res) => {
     }
     const user = await User.findByIdAndUpdate(req.params.id, updateData, { new: true }).select('-password');
     broadcast({ type: 'DATA_UPDATED', path: 'users' });
+    logAudit(req.user, 'UPDATE', 'User', req.params.id, { changedFields: Object.keys(rest) });
 
     await triggerN8nWebhook('USER_UPDATE', {
       userId: req.params.id,
@@ -101,6 +104,7 @@ router.delete('/:id', authenticate, async (req: any, res) => {
 
     await User.deleteOne({ _id: id });
     broadcast({ type: 'DATA_UPDATED', path: 'users' });
+    logAudit(req.user, 'DELETE', 'User', id, { name: userToDelete.name, email: userToDelete.email, role: userToDelete.role });
 
     triggerN8nWebhook('USER_DELETE', {
       userId: id,

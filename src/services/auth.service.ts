@@ -3,6 +3,7 @@ import jwt       from 'jsonwebtoken';
 
 import { User, RolePermission } from '../models/index.js';
 import { triggerN8nWebhook }     from '../utils/webhook.js';
+import { logAudit }              from '../utils/audit.js';
 
 // ── Config ─────────────────────────────────────────────────────────────────────
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -53,13 +54,14 @@ export class AuthService {
     const userData  = sanitiseUser(user);
     userData.rolePermissions = rolePerms?.permissions ?? [];
 
-    // Non-blocking login webhook
+    // Non-blocking login webhook + audit log
     triggerN8nWebhook('LOGIN', {
       userId: user._id.toString(),
       email:  user.email,
       name:   user.name,
       role:   user.role,
     }).catch(() => {/* intentionally swallowed */});
+    logAudit({ _id: user._id, name: user.name, email: user.email }, 'LOGIN', 'Auth', undefined, { role: user.role });
 
     return { user: userData, token };
   }

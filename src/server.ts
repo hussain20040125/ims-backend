@@ -34,6 +34,7 @@ import notificationRoutes from "./routes/notification.routes.js";
 import writeoffRoutes from "./routes/writeoff.routes.js";
 import publicRoutes from "./routes/public.routes.js";
 import uploadRoutes from "./routes/upload.routes.js";
+import auditRoutes from "./routes/audit.routes.js";
 import { encryptionMiddleware } from "./middleware/encrypt.middleware.js";
 
 const app = express();
@@ -101,6 +102,7 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/writeoffs", writeoffRoutes);
 app.use("/api/public", publicRoutes);
 app.use("/api", uploadRoutes);
+app.use("/api/audit-logs", auditRoutes);
 
 // Incoming Webhook (public)
 app.post("/api/webhook/n8n", async (req, res) => {

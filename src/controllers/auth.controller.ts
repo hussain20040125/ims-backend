@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthService }        from '../services/auth.service.js';
 import { AuthenticatedRequest } from '../middleware/auth.middleware.js';
+import { logAudit } from '../utils/audit.js';
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 
@@ -26,7 +27,8 @@ export class AuthController {
   }
 
   // ── POST /api/auth/logout ─────────────────────────────────────────────────
-  static async logout(_req: Request, res: Response) {
+  static async logout(req: AuthenticatedRequest, res: Response) {
+    if (req.user) logAudit(req.user, 'LOGOUT', 'Auth');
     res.clearCookie('token', {
       httpOnly: true,
       secure:   IS_PROD,

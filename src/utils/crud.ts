@@ -7,6 +7,7 @@ import { triggerN8nWebhook } from './webhook.js';
 import { broadcast } from './broadcaster.js';
 import { PurchaseOrder, MaterialRequirement, Quotation, MRAllocation, Transaction } from '../models/index.js';
 import { POService } from '../services/po.service.js';
+import { logAudit } from './audit.js';
 
 export const cascadeDeleteMR = async (mrId: string) => {
   // 1. Delete associated Quotations
@@ -142,7 +143,8 @@ export const createCrudRoutes = (
       }
       const item = await model.create(data);
       broadcast({ type: 'DATA_UPDATED', path: resourceName });
-      
+      logAudit(req.user, 'CREATE', resourceName, item[idField] || item.id);
+
       await createNotification({
         message: `New ${resourceName.toUpperCase()} created by ${req.user.name}`,
         severity: 'success',
@@ -336,7 +338,12 @@ export const createCrudRoutes = (
       Object.assign(oldItem, data);
       const item = await oldItem.save();
       broadcast({ type: 'DATA_UPDATED', path: resourceName });
-      
+      const auditAction = item?.status !== oldItem?.status
+        ? (item.status?.includes('Approved') ? 'APPROVE' : item.status?.includes('Reject') ? 'REJECT' : 'UPDATE')
+        : 'UPDATE';
+      logAudit(req.user, auditAction as any, resourceName, item[idField] || item.id,
+        item?.status !== oldItem?.status ? { from: oldItem?.status, to: item?.status } : undefined);
+
       if (oldItem && item && oldItem.status !== item.status) {
         await createNotification({
           message: `${resourceName.toUpperCase()} ${item[idField] || item.id} status changed to ${item.status} by ${req.user.name}`,
@@ -544,7 +551,8 @@ export const createCrudRoutes = (
       }
       
       broadcast({ type: 'DATA_UPDATED', path: resourceName });
-      
+      logAudit(req.user, 'DELETE', resourceName, req.params.id);
+
       await createNotification({
         message: `${resourceName.toUpperCase()} ${req.params.id} was deleted by ${req.user.name}`,
         severity: 'warning',

@@ -6,6 +6,7 @@ import { triggerN8nWebhook } from '../utils/webhook.js';
 import { broadcast } from '../utils/broadcaster.js';
 import { getNextSequence } from '../utils/sequence.js';
 import { createCrudRoutes } from '../utils/crud.js';
+import { logAudit } from '../utils/audit.js';
 
 const router = Router();
 
@@ -42,7 +43,8 @@ router.post('/', authenticate, async (req: any, res) => {
     });
 
     broadcast({ type: 'DATA_UPDATED', path: 'pos' });
-    
+    logAudit(req.user, 'CREATE', 'PurchaseOrder', item.id, { supplier: item.supplier, totalValue: item.totalValue, status: item.status });
+
     await createNotification({
       message: `New PURCHASE ORDER created by ${req.user.name}`,
       severity: 'success',
@@ -142,6 +144,7 @@ router.put('/:id/cancel', authenticate, async (req: any, res) => {
     }
 
     broadcast({ type: 'DATA_UPDATED', path: 'pos' });
+    logAudit(req.user, 'CANCEL', 'PurchaseOrder', (po as any).id, { reason: String(cancelNote).trim() });
 
     await createNotification({
       message: `PO ${(po as any).id} cancelled by ${req.user.name}. Reason: ${String(cancelNote).trim()}`,
