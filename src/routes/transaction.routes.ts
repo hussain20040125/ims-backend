@@ -6,6 +6,7 @@ import { getRolesWithPermission, createNotification } from '../utils/notificatio
 import { triggerN8nWebhook, checkAndFireLowStockWebhook } from '../utils/webhook.js';
 import { broadcast } from '../utils/broadcaster.js';
 import { createCrudRoutes } from '../utils/crud.js';
+import { logAudit } from '../utils/audit.js';
 
 const router = Router();
 
@@ -86,6 +87,7 @@ router.post('/inward', authenticate, async (req: any, res: Response) => {
     broadcast({ type: 'DATA_UPDATED', path: 'inward' });
     broadcast({ type: 'DATA_UPDATED', path: 'inventory' });
     broadcast({ type: 'DATA_UPDATED', path: 'transactions' });
+    logAudit(req.user, 'CREATE', 'Inward', data.id, { project: data.project, itemCount: body.items?.length });
 
     await createNotification({
       message: `New Inward transaction ${data.id} created by ${req.user.name}`,
@@ -268,6 +270,7 @@ router.post('/outward', authenticate, async (req: any, res: Response) => {
     }], { session });
 
     await session.commitTransaction();
+    logAudit(req.user, 'CREATE', 'Outward', data.id, { mrId: body.mrId, project: data.project, itemCount: body.items?.length });
     broadcast({ type: 'DATA_UPDATED', path: 'outward' });
     broadcast({ type: 'DATA_UPDATED', path: 'inventory' });
     broadcast({ type: 'DATA_UPDATED', path: 'transactions' });
@@ -447,6 +450,7 @@ router.post('/inward-returns', authenticate, async (req: any, res: Response) => 
 
     await Transaction.create([{ ...data, type: "Inward Return" }], { session });
     await session.commitTransaction();
+    logAudit(req.user, 'CREATE', 'InwardReturn', data.id, { supplier: data.supplier, itemCount: data.items?.length });
 
     broadcast({ type: 'DATA_UPDATED', path: 'inward-returns' });
     broadcast({ type: 'DATA_UPDATED', path: 'inventory' });
@@ -573,6 +577,7 @@ router.post('/outward-returns', authenticate, async (req: any, res: Response) =>
 
     await Transaction.create([{ ...data, type: "Outward Return" }], { session });
     await session.commitTransaction();
+    logAudit(req.user, 'CREATE', 'OutwardReturn', data.id, { sourceSite: data.sourceSite, itemCount: data.items?.length });
 
     broadcast({ type: 'DATA_UPDATED', path: 'outward-returns' });
     broadcast({ type: 'DATA_UPDATED', path: 'inventory' });
@@ -799,7 +804,8 @@ router.post('/transactions', authenticate, async (req: any, res) => {
 
     const transaction = await Transaction.create([transactionData], { session });
     await session.commitTransaction();
-    
+    logAudit(req.user, 'CREATE', 'Transaction', transactionData.id, { type: transactionData.type, project: transactionData.project, itemCount: transactionData.items?.length });
+
     broadcast({ type: 'DATA_UPDATED', path: 'transactions' });
     broadcast({ type: 'DATA_UPDATED', path: 'inventory' });
 

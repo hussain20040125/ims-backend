@@ -7,6 +7,7 @@ import { triggerN8nWebhook } from '../utils/webhook.js';
 import { broadcast } from '../utils/broadcaster.js';
 import { getNextSequence } from '../utils/sequence.js';
 import { createCrudRoutes } from '../utils/crud.js';
+import { logAudit } from '../utils/audit.js';
 
 const router = Router();
 
@@ -177,9 +178,10 @@ router.post('/allocate', authenticate, async (req: any, res) => {
     await mr.save({ session });
 
     await session.commitTransaction();
+    logAudit(req.user, 'UPDATE', 'MRAllocation', mrId, { allocatedBy: req.user.name, items: items.map((i: any) => i.sku) });
     broadcast({ type: 'DATA_UPDATED', path: 'inventory' });
     broadcast({ type: 'DATA_UPDATED', path: 'material-requirements' });
-    
+
     res.json({ success: true, message: "Material allocated successfully" });
   } catch (error: any) {
     await session.abortTransaction();
@@ -210,6 +212,7 @@ router.post('/', authenticate, async (req: any, res) => {
     });
 
     broadcast({ type: 'DATA_UPDATED', path: 'material-requirements' });
+    logAudit(req.user, 'CREATE', 'MaterialRequirement', requirement.id, { project: requirement.project, requesterName: requirement.requesterName });
 
     const storeRoles = await getRolesWithPermission('APPROVE_MR_STORE');
     await createNotification({
