@@ -710,6 +710,8 @@ export const MRAllocation = mongoose.model('MRAllocation', MRAllocationSchema);
 const QuotationItemSchema = new Schema({
   materialName: { type: String, required: true },
   category: String,
+  mrQty: { type: Number },
+  mrUnit: String,
   qty: { type: Number, required: true },
   unit: String,
   rate: { type: Number, required: true },

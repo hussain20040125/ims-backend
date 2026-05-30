@@ -234,6 +234,56 @@ router.get("/mr/:id", async (req, res) => {
   }
 });
 
+// ─── GET /api/public/tracking/:id ─────────────────────────────────────────────
+router.get("/tracking/:id", async (req, res) => {
+  try {
+    const queryId = req.params.id;
+    let mr: any = null;
+    let po: any = null;
+    let grns: any[] = [];
+    let quotations: any[] = [];
+
+    if (queryId.startsWith('PO-')) {
+      po = await PurchaseOrder.findOne({ id: queryId }).lean();
+      if (po?.mrId) mr = await MaterialRequirement.findOne({ id: po.mrId }).lean();
+    } else if (queryId.startsWith('GRN-')) {
+      const grn = await Inventory.findOne({ id: queryId, transactionType: 'GRN' }).lean();
+      if (grn) {
+        if (grn.poId) {
+          po = await PurchaseOrder.findOne({ id: grn.poId }).lean();
+          if (po?.mrId) mr = await MaterialRequirement.findOne({ id: po.mrId }).lean();
+        } else if (grn.mrNo) {
+          mr = await MaterialRequirement.findOne({ id: grn.mrNo }).lean();
+        }
+      }
+    }
+
+    if (!mr) {
+      mr = await MaterialRequirement.findOne({ id: queryId }).lean();
+    }
+
+    if (!mr) {
+      return res.status(404).json({ success: false, message: "Document not found. Please check the ID." });
+    }
+
+    quotations = await Quotation.find({ mrId: mr.id }).lean();
+    
+    if (!po) {
+      po = await PurchaseOrder.findOne({ mrId: mr.id }).lean();
+    }
+
+    if (po) {
+      grns = await Inventory.find({ poId: po.id, transactionType: 'GRN' }).lean();
+    } else {
+      grns = await Inventory.find({ mrNo: mr.id, transactionType: 'GRN' }).lean();
+    }
+
+    return res.json({ success: true, data: { mr, po, quotations, grns } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // ─── POST /api/public/inward ──────────────────────────────────────────────────
 router.post("/inward", async (req, res) => {
   try {
