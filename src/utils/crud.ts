@@ -37,13 +37,10 @@ export const createCrudRoutes = (
   const basePerm = overrideBasePerm || resourceName.toUpperCase().replace(/-/g, '_');
   const singularPerm = basePerm.endsWith('S') ? basePerm.slice(0, -1) : basePerm;
   
-  // GET (list)
+  // GET (list) — all authenticated users can read any resource.
+  // Write operations (POST/PUT/DELETE) are still permission-gated.
   router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const isTracking = req.query.isTracking === 'true';
-      if (!isTracking && !(await serverHasPermission(req.user, `VIEW_${basePerm}`))) {
-        return res.json({ success: true, data: [], pagination: { total: 0, page: 1, limit: 10, pages: 0 } });
-      }
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10000;
       const skip = (page - 1) * limit;
@@ -115,12 +112,9 @@ export const createCrudRoutes = (
     }
   });
 
-  // GET (by ID)
+  // GET (by ID) — all authenticated users can read any resource.
   router.get('/:id', authenticate, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      if (!(await serverHasPermission(req.user, `VIEW_${basePerm}`))) {
-        return res.status(403).json({ success: false, message: 'Forbidden' });
-      }
       const item = await model.findOne({ [idField]: req.params.id }).lean();
       if (!item) {
         return res.status(404).json({ success: false, message: 'Not found' });
@@ -290,6 +284,12 @@ export const createCrudRoutes = (
             });
           }
         }
+
+        const editFields = ['items', 'project', 'location', 'workType', 'requesterName', 'requirementDate'];
+        const isEditingDetails = Object.keys(req.body).some(key => editFields.includes(key));
+        if (isEditingDetails && req.body.status !== 'Approved by Store') {
+          req.body.status = 'Store Pending';
+        }
       }
       
       if (resourceName === 'pos') {
@@ -392,8 +392,8 @@ export const createCrudRoutes = (
           let message = '';
           
           if (item.status === 'Approved by Store') {
-            nextPermission = 'APPROVE_MR_AGM';
-            message = `MR ${item.id} approved by Store. Now requires AGM Approval.`;
+            nextPermission = 'CREATE_PO';
+            message = `MR ${item.id} approved by Store. It is now ready for Procurement.`;
           } else if (item.status === 'Approved by AGM') {
             nextPermission = 'CREATE_PO';
             message = `MR ${item.id} approved by AGM. It is now in Quotation/Procurement phase.`;

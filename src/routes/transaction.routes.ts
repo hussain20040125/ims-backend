@@ -381,7 +381,7 @@ router.delete('/outward/:id', authenticate, async (req: any, res: Response) => {
               if (allIssued) mr.status = 'Closed';
               else if (someIssued) mr.status = 'Partially Issued';
               else if (allAllocated) mr.status = 'Allocated';
-              else if (someAllocated) mr.status = 'Partially Allocated';
+              else if (someAllocated) mr.status = 'Store Pending';
               else mr.status = 'Approved' as any; 
               
               await mr.save({ session });
@@ -876,7 +876,7 @@ router.delete('/transactions/:id', authenticate, async (req: any, res) => {
             if (allIssued) mr.status = 'Closed';
             else if (someIssued) mr.status = 'Partially Issued';
             else if (allAllocated) mr.status = 'Allocated';
-            else if (someAllocated) mr.status = 'Partially Allocated';
+            else if (someAllocated) mr.status = 'Store Pending';
             else mr.status = 'Approved' as any;
             
             await mr.save({ session });

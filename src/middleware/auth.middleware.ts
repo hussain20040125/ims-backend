@@ -31,11 +31,15 @@ export async function serverHasPermission(user: any, permission: string): Promis
   if (!user) return false;
   const roleLower = (user.role || "").toLowerCase().trim();
   if (roleLower === 'super admin' || roleLower === 'superadmin' || roleLower === 'admin') return true;
-  
-  // Case-insensitive role lookup
+
+  // VIEW_* permissions are open to all authenticated users — data visibility
+  // must be the same for everyone. Only write/action permissions are role-gated.
+  if (permission.startsWith('VIEW_')) return true;
+
+  // Case-insensitive role lookup for write/action permissions
   const rolePerm = await RolePermission.findOne({ role: { $regex: new RegExp(`^${user.role}$`, 'i') } });
   if (rolePerm?.permissions.includes(permission)) return true;
   if (user.permissions?.includes(permission)) return true;
-  
+
   return false;
 }

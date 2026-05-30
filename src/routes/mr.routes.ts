@@ -173,7 +173,7 @@ router.post('/allocate', authenticate, async (req: any, res) => {
     }
 
     const allAllocated = mr.items.every((i: any) => i.status === "Allocated" || i.status === "Issued");
-    mr.status = allAllocated ? "Allocated" : "Partially Allocated";
+    mr.status = allAllocated ? "Allocated" : "Store Pending";
     await mr.save({ session });
 
     await session.commitTransaction();

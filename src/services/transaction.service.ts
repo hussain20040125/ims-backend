@@ -370,7 +370,7 @@ export class TransactionService {
             if (allIssued) mr.status = 'Closed';
             else if (someIssued) mr.status = 'Partially Issued';
             else if (allAllocated) mr.status = 'Allocated';
-            else if (someAllocated) mr.status = 'Partially Allocated';
+            else if (someAllocated) mr.status = 'Store Pending';
             else (mr as any).status = 'Approved';
             
             await mr.save({ session });
