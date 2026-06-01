@@ -10,6 +10,8 @@ import {
   Transaction,
   PurchaseOrder,
   GRN,
+  InwardReturn,
+  OutwardReturn,
 } from "../models/index.js";
 import { getNextSequence } from "../utils/sequence.js";
 import { broadcast } from "../utils/broadcaster.js";
@@ -20,7 +22,7 @@ const router = Router();
 // ─── Helper: update inventory stock ──────────────────────────────────────────
 const INWARD_TYPES = [
   "Inward", "Public Inward", "Public Transfer Inward",
-  "Transfer Inward", "Inward Return", "GRN",
+  "Transfer Inward", "GRN", "Outward Return", "Public Outward Return"
 ];
 
 const updatePublicStock = async (
@@ -364,6 +366,84 @@ router.post("/outward", async (req, res) => {
     });
 
     res.json({ success: true, data: outward });
+  } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+// ─── POST /api/public/inward-returns ──────────────────────────────────────────────────
+router.post("/inward-returns", async (req, res) => {
+  try {
+    const body = req.body;
+    if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
+      throw new Error("At least one item is required");
+    }
+
+    const seq  = await getNextSequence("INR");
+    const year = new Date().getFullYear();
+    const id   = body.id || `INR-${year}-${seq}`;
+    const data = { ...body, id, type: "Public Inward Return", vendor: body.supplier || body.vendor };
+    
+    const inwardReturn = await InwardReturn.create(data);
+
+    for (const item of body.items) {
+      await updatePublicStock("Public Inward Return", item.sku, item.itemName, item.qty, item.unit);
+    }
+
+    await Transaction.create({ ...data, type: "Public Inward Return" });
+
+    broadcast({ type: "DATA_UPDATED", path: "inward-returns" });
+    broadcast({ type: "DATA_UPDATED", path: "inventory"    });
+    broadcast({ type: "DATA_UPDATED", path: "transactions" });
+
+    const storeRoles = await getRolesWithPermission("APPROVE_MR_STORE");
+    await createNotification({
+      message: `New Public Inward Return (${id}) recorded for supplier "${body.supplier || "N/A"}".`,
+      severity: "info",
+      path: "inward-returns",
+      targetRoles: storeRoles,
+    });
+
+    res.json({ success: true, data: inwardReturn });
+  } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+// ─── POST /api/public/outward-returns ─────────────────────────────────────────────────
+router.post("/outward-returns", async (req, res) => {
+  try {
+    const body = req.body;
+    if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
+      throw new Error("At least one item is required");
+    }
+
+    const seq  = await getNextSequence("OUTR");
+    const year = new Date().getFullYear();
+    const id   = body.id || `OUTR-${year}-${seq}`;
+    const data = { ...body, id, type: "Public Outward Return" };
+
+    const outwardReturn = await OutwardReturn.create(data);
+
+    for (const item of body.items) {
+      await updatePublicStock("Public Outward Return", item.sku, item.itemName, item.qty, item.unit);
+    }
+
+    await Transaction.create({ ...data, type: "Public Outward Return" });
+
+    broadcast({ type: "DATA_UPDATED", path: "outward-returns" });
+    broadcast({ type: "DATA_UPDATED", path: "inventory"    });
+    broadcast({ type: "DATA_UPDATED", path: "transactions" });
+
+    const storeRoles = await getRolesWithPermission("APPROVE_MR_STORE");
+    await createNotification({
+      message: `New Public Outward Return (${id}) recorded for project "${body.project || "N/A"}".`,
+      severity: "info",
+      path: "outward-returns",
+      targetRoles: storeRoles,
+    });
+
+    res.json({ success: true, data: outwardReturn });
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message });
   }

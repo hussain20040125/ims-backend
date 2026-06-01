@@ -143,7 +143,7 @@ export const createCrudRoutes = (
       }
       const item = await model.create(data);
       broadcast({ type: 'DATA_UPDATED', path: resourceName });
-      logAudit(req.user, 'CREATE', resourceName, item[idField] || item.id);
+      logAudit(req.user, 'CREATE', resourceName, item[idField] || item.id, { action: 'Resource Created', createdId: item[idField] || item.id });
 
       // Fire notifications asynchronously — don't block the response
       createNotification({
@@ -342,8 +342,11 @@ export const createCrudRoutes = (
       const auditAction = item?.status !== oldItem?.status
         ? (item.status?.includes('Approved') ? 'APPROVE' : item.status?.includes('Reject') ? 'REJECT' : 'UPDATE')
         : 'UPDATE';
-      logAudit(req.user, auditAction as any, resourceName, item[idField] || item.id,
-        item?.status !== oldItem?.status ? { from: oldItem?.status, to: item?.status } : undefined);
+      const changedFields = Object.keys(req.body);
+      const auditDetails = item?.status !== oldItem?.status 
+        ? { from: oldItem?.status, to: item?.status, changedFields } 
+        : { changedFields };
+      logAudit(req.user, auditAction as any, resourceName, item[idField] || item.id, auditDetails);
 
       if (oldItem && item && oldItem.status !== item.status) {
         await createNotification({
@@ -552,7 +555,14 @@ export const createCrudRoutes = (
       }
       
       broadcast({ type: 'DATA_UPDATED', path: resourceName });
-      logAudit(req.user, 'DELETE', resourceName, req.params.id);
+      const snapshot = deletedItem?.toObject ? deletedItem.toObject() : deletedItem;
+      const safeSnapshot = Object.keys(snapshot || {}).reduce((acc: any, key) => {
+         if (!['items', 'images', 'photos', 'challanPhotos', 'personPhotos', '__v', '_id'].includes(key)) {
+             acc[key] = snapshot[key];
+         }
+         return acc;
+      }, {});
+      logAudit(req.user, 'DELETE', resourceName, req.params.id, { action: 'Resource Deleted', snapshot: safeSnapshot });
 
       await createNotification({
         message: `${resourceName.toUpperCase()} ${req.params.id} was deleted by ${req.user.name}`,

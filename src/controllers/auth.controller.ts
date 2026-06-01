@@ -28,7 +28,7 @@ export class AuthController {
 
   // ── POST /api/auth/logout ─────────────────────────────────────────────────
   static async logout(req: AuthenticatedRequest, res: Response) {
-    if (req.user) logAudit(req.user, 'LOGOUT', 'Auth');
+    if (req.user) logAudit(req.user, 'LOGOUT', 'Auth', req.user._id.toString(), { action: 'User Logout' });
     res.clearCookie('token', {
       httpOnly: true,
       secure:   IS_PROD,
