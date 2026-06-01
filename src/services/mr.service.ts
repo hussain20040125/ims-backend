@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger.js';
 import mongoose from 'mongoose';
 import { MaterialRequirement, MRAllocation, Quotation, Inventory } from '../models/index.js';
 import { getNextSequence } from '../utils/sequence.js';
@@ -62,7 +63,7 @@ export class MRService {
       items: mr.items,
       location: mr.location,
       createdBy,
-    }).catch(err => console.error('[MRService] MR create webhook failed:', err));
+    }).catch(err => logger.error('[MRService] MR create webhook failed:', err));
 
     return mr;
   }
@@ -76,7 +77,7 @@ export class MRService {
       project: mr.project,
       status: mr.status,
       updatedBy,
-    }).catch(err => console.error('[MRService] MR update webhook failed:', err));
+    }).catch(err => logger.error('[MRService] MR update webhook failed:', err));
 
     return mr;
   }
@@ -91,7 +92,7 @@ export class MRService {
       requirementId: id,
       project: mr.project,
       deletedBy,
-    }).catch(err => console.error('[MRService] MR delete webhook failed:', err));
+    }).catch(err => logger.error('[MRService] MR delete webhook failed:', err));
 
     return true;
   }

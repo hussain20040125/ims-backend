@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger.js';
 import bcrypt from 'bcryptjs';
 import { User, RolePermission } from '../models/index.js';
 import { triggerN8nWebhook } from '../utils/webhook.js';
@@ -42,7 +43,7 @@ export class UserService {
       name: user.name,
       role: user.role,
       createdBy,
-    }).catch(err => console.error('[UserService] User create webhook failed:', err));
+    }).catch(err => logger.error('[UserService] User create webhook failed:', err));
 
     const rp = await RolePermission.findOne({ role: user.role });
     const obj = user.toObject() as any;
@@ -77,7 +78,7 @@ export class UserService {
       name: user.name,
       role: user.role,
       updatedBy,
-    }).catch(err => console.error('[UserService] User update webhook failed:', err));
+    }).catch(err => logger.error('[UserService] User update webhook failed:', err));
 
     const rp = await RolePermission.findOne({ role: user.role });
     const obj = user.toObject() as any;
@@ -102,7 +103,7 @@ export class UserService {
       email: user.email,
       name: user.name,
       deletedBy,
-    }).catch(err => console.error('[UserService] User delete webhook failed:', err));
+    }).catch(err => logger.error('[UserService] User delete webhook failed:', err));
 
     return true;
   }

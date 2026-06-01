@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger.js';
 import { Router } from 'express';
 import mongoose from 'mongoose';
 import { MaterialRequirement, Inventory, MRAllocation, RolePermission } from '../models/index.js';
@@ -120,7 +121,7 @@ router.get('/', authenticate, async (req: any, res) => {
       pagination: { total, page, limit, pages: Math.ceil(total / limit) }
     });
   } catch (error: any) {
-    console.error(`Error fetching material-requirements:`, error);
+    logger.error(`Error fetching material-requirements:`, error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -196,7 +197,7 @@ router.post('/allocate', authenticate, async (req: any, res) => {
     res.json({ success: true, message: "Material allocated successfully" });
   } catch (error: any) {
     await session.abortTransaction();
-    console.error("Allocation Error:", error);
+    logger.error("Allocation Error:", error);
     res.status(400).json({ success: false, message: error.message });
   } finally {
     session.endSession();
@@ -245,7 +246,7 @@ router.post('/', authenticate, async (req: any, res) => {
 
     res.json({ success: true, data: requirement });
   } catch (error: any) {
-    console.error('Error creating material requirement:', error);
+    logger.error('Error creating material requirement:', error);
     res.status(400).json({ success: false, message: error.message });
   }
 });

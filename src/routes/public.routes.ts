@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger.js';
 import { Router } from "express";
 import {
   SupplierModel,
@@ -544,7 +545,7 @@ router.post("/material-requirement", async (req, res) => {
 
     res.json({ success: true, data: requirement });
   } catch (error: any) {
-    console.error("Error creating public material requirement:", error);
+    logger.error("Error creating public material requirement:", error);
     res.status(400).json({ success: false, message: error.message });
   }
 });

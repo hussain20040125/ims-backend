@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger.js';
 import mongoose from 'mongoose';
 import { 
   Transaction, Inward, Outward, InwardReturn, OutwardReturn, 
@@ -141,8 +142,8 @@ export class TransactionService {
 
       await session.commitTransaction();
 
-      triggerN8nWebhook('INWARD', { transactionId: data.id, ...data }).catch(err => console.error(err));
-      checkAndFireLowStockWebhook(data.items.map((i: any) => i.sku)).catch(err => console.error(err));
+      triggerN8nWebhook('INWARD', { transactionId: data.id, ...data }).catch(err => logger.error(err));
+      checkAndFireLowStockWebhook(data.items.map((i: any) => i.sku)).catch(err => logger.error(err));
 
       return inward[0];
     } catch (error) {
@@ -186,8 +187,8 @@ export class TransactionService {
         updatedBy,
         items: newData.items,
         project: newData.project,
-      }).catch(err => console.error(err));
-      checkAndFireLowStockWebhook(newData.items.map((i: any) => i.sku)).catch(err => console.error(err));
+      }).catch(err => logger.error(err));
+      checkAndFireLowStockWebhook(newData.items.map((i: any) => i.sku)).catch(err => logger.error(err));
 
       return updated;
     } catch (error) {
@@ -214,7 +215,7 @@ export class TransactionService {
           transactionId: id,
           deletedBy,
           itemSkus: item.items.map((i: any) => i.sku),
-        }).catch(err => console.error(err));
+        }).catch(err => logger.error(err));
       }
       await session.commitTransaction();
       return true;
@@ -309,8 +310,8 @@ export class TransactionService {
 
       await session.commitTransaction();
 
-      triggerN8nWebhook('OUTWARD', { transactionId: data.id, ...data }).catch(err => console.error(err));
-      checkAndFireLowStockWebhook(data.items.map((i: any) => i.sku)).catch(err => console.error(err));
+      triggerN8nWebhook('OUTWARD', { transactionId: data.id, ...data }).catch(err => logger.error(err));
+      checkAndFireLowStockWebhook(data.items.map((i: any) => i.sku)).catch(err => logger.error(err));
 
       return outward[0];
     } catch (error) {
@@ -410,7 +411,7 @@ export class TransactionService {
       await Transaction.create([{ ...data, type: "Inward Return" }], { session });
       await session.commitTransaction();
       
-      triggerN8nWebhook('INWARD_RETURN', { transactionId: data.id, ...data }).catch(err => console.error(err));
+      triggerN8nWebhook('INWARD_RETURN', { transactionId: data.id, ...data }).catch(err => logger.error(err));
       return item[0];
     } catch (error) {
       await session.abortTransaction();
@@ -443,7 +444,7 @@ export class TransactionService {
         updatedBy,
         items: data.items,
         project: data.project,
-      }).catch(err => console.error(err));
+      }).catch(err => logger.error(err));
       return item;
     } catch (error) {
       await session.abortTransaction();
@@ -469,7 +470,7 @@ export class TransactionService {
           transactionId: id,
           deletedBy,
           itemSkus: item.items.map((i: any) => i.sku),
-        }).catch(err => console.error(err));
+        }).catch(err => logger.error(err));
       }
       await session.commitTransaction();
       return true;
@@ -498,7 +499,7 @@ export class TransactionService {
         createdBy,
         items: data.items,
         project: data.project,
-      }).catch(err => console.error(err));
+      }).catch(err => logger.error(err));
 
       return item[0];
     } catch (error) {
@@ -526,7 +527,7 @@ export class TransactionService {
         updatedBy,
         items: data.items,
         project: data.project,
-      }).catch(err => console.error(err));
+      }).catch(err => logger.error(err));
 
       return item;
     } catch (error) {
@@ -554,7 +555,7 @@ export class TransactionService {
           transactionId: id,
           deletedBy,
           itemSkus: item.items.map((i: any) => i.sku),
-        }).catch(err => console.error(err));
+        }).catch(err => logger.error(err));
       }
       await session.commitTransaction();
       return true;

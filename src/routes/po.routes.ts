@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger.js';
 import { Router } from 'express';
 import { PurchaseOrder, Quotation, MaterialRequirement } from '../models/index.js';
 import { authenticate, serverHasPermission } from '../middleware/auth.middleware.js';
@@ -75,7 +76,7 @@ router.post('/', authenticate, async (req: any, res) => {
 
     res.json({ success: true, data: item });
   } catch (error: any) {
-    console.error('Error creating PO:', error);
+    logger.error('Error creating PO:', error);
     res.status(400).json({ success: false, message: error.message });
   }
 });
@@ -167,7 +168,7 @@ router.put('/:id/cancel', authenticate, async (req: any, res) => {
       data: { id: req.params.id, cancelledAt },
     });
   } catch (error: any) {
-    console.error('Error cancelling PO:', error);
+    logger.error('Error cancelling PO:', error);
     res.status(400).json({ success: false, message: error.message });
   }
 });

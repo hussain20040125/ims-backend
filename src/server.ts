@@ -12,6 +12,7 @@ import morgan from "morgan";
 import mongoose from "mongoose";
 import rateLimit from "express-rate-limit";
 import compression from "compression";
+import { logger } from "./utils/logger.js";
 
 import { connectDB } from "./config/db.js";
 import { initBroadcaster, broadcast } from "./utils/broadcaster.js";
@@ -46,7 +47,7 @@ if (IS_PROD) {
   const required = ["MONGODB_URI", "JWT_SECRET", "ENCRYPTION_KEY"];
   const missing = required.filter((k) => !process.env[k]);
   if (missing.length) {
-    console.error(`[STARTUP] Missing required env vars: ${missing.join(", ")}`);
+    logger.error(`[STARTUP] Missing required env vars: ${missing.join(", ")}`);
     process.exit(1);
   }
 }
@@ -190,7 +191,7 @@ app.post("/api/webhook/n8n", async (req, res) => {
 
 // ── Global error handler ──────────────────────────────────────────────────────
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error("[Error]", err);
+  logger.error("[Error]", err);
   const status = err.status || 500;
   const message = IS_PROD && status === 500 ? "Internal server error" : (err.message || "Internal server error");
   res.status(status).json({ success: false, message });
@@ -198,26 +199,26 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 
 // ── Start server ──────────────────────────────────────────────────────────────
 server.listen(PORT, () => {
-  console.log(`IMS backend running on port ${PORT} [${process.env.NODE_ENV || "development"}]`);
+  logger.info(`IMS backend running on port ${PORT} [${process.env.NODE_ENV || "development"}]`);
 });
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 const shutdown = async (signal: string) => {
-  console.log(`[${signal}] Shutting down gracefully...`);
+  logger.info(`[${signal}] Shutting down gracefully...`);
   server.close(async () => {
     await mongoose.connection.close();
-    console.log("MongoDB connection closed. Bye.");
+    logger.info("MongoDB connection closed. Bye.");
     process.exit(0);
   });
-  setTimeout(() => { console.error("Forced shutdown after timeout"); process.exit(1); }, 10000);
+  setTimeout(() => { logger.error("Forced shutdown after timeout"); process.exit(1); }, 10000);
 };
 
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT",  () => shutdown("SIGINT"));
 process.on("unhandledRejection", (reason) => {
-  console.error("[unhandledRejection]", reason);
+  logger.error("[unhandledRejection]", reason);
 });
 process.on("uncaughtException", (err) => {
-  console.error("[uncaughtException]", err);
+  logger.error("[uncaughtException]", err);
   shutdown("uncaughtException");
 });

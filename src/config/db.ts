@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger.js';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
@@ -7,7 +8,7 @@ dotenv.config();
 
 const MONGODB_URI = process.env.MONGODB_URI || '';
 if (!MONGODB_URI) {
-  console.error('[DB] MONGODB_URI environment variable is not set. Please configure it in your deployment environment.');
+  logger.error('[DB] MONGODB_URI environment variable is not set. Please configure it in your deployment environment.');
 }
 const ALLOWED_DOMAIN = (process.env.ALLOWED_DOMAIN || 'neotericgrp.in').toLowerCase().trim();
 
@@ -15,7 +16,7 @@ export async function connectDB() {
   try {
     if (!MONGODB_URI) throw new Error('MONGODB_URI is not set');
     await mongoose.connect(MONGODB_URI);
-    console.log('[DB] Connected to MongoDB');
+    logger.info('[DB] Connected to MongoDB');
 
     // Ensure demo users exist
     try {
@@ -110,12 +111,12 @@ export async function connectDB() {
       );
 
     } catch (seedError) {
-      console.error('Failed to seed demo users:', seedError);
+      logger.error('Failed to seed demo users:', seedError);
     }
   } catch (error) {
-    console.error('CRITICAL: MongoDB connection failed.');
-    console.error('Error details:', error instanceof Error ? error.message : error);
-    console.error('Please ensure MONGODB_URI is correctly set in your environment variables.');
-    console.error('If you are using a local URI (127.0.0.1), it will not work in this environment.');
+    logger.error('CRITICAL: MongoDB connection failed.');
+    logger.error('Error details:', error instanceof Error ? error.message : error);
+    logger.error('Please ensure MONGODB_URI is correctly set in your environment variables.');
+    logger.error('If you are using a local URI (127.0.0.1), it will not work in this environment.');
   }
 }

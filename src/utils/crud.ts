@@ -1,3 +1,4 @@
+import { logger } from './logger.js';
 import { Router, Response } from 'express';
 import mongoose from 'mongoose';
 import { authenticate, serverHasPermission, AuthenticatedRequest } from '../middleware/auth.middleware.js';
@@ -108,7 +109,7 @@ export const createCrudRoutes = (
         pagination: { total, page, limit, pages: Math.ceil(total / limit) }
       });
     } catch (error: any) {
-      console.error(`Error fetching ${resourceName}:`, error);
+      logger.error(`Error fetching ${resourceName}:`, error);
       res.status(500).json({ success: false, message: error.message });
     }
   });

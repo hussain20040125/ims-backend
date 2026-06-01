@@ -1,3 +1,4 @@
+import { logger } from './logger.js';
 import { AuditLog } from '../models/index.js';
 
 export type AuditAction = 'LOGIN' | 'LOGOUT' | 'CREATE' | 'UPDATE' | 'DELETE' | 'APPROVE' | 'REJECT' | 'CANCEL';
@@ -18,5 +19,5 @@ export const logAudit = (
     resource,
     resourceId,
     details,
-  }).catch((err) => console.error('[Audit] Failed to write log:', err));
+  }).catch((err) => logger.error('[Audit] Failed to write log:', err));
 };

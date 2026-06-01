@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger.js';
 import { Router } from 'express';
 import mongoose from 'mongoose';
 import { GRN, Inward, Transaction, Inventory, PurchaseOrder } from '../models/index.js';
@@ -71,7 +72,7 @@ router.get('/', authenticate, async (req, res) => {
       pagination: { total, page, limit, pages: Math.ceil(total / limit) }
     });
   } catch (error: any) {
-    console.error("Error fetching grn:", error);
+    logger.error("Error fetching grn:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
