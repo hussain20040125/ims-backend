@@ -6,9 +6,11 @@ import path from "path";
 import http from "http";
 import fs from "fs";
 import cors from "cors";
+import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import morgan from "morgan";
 import mongoose from "mongoose";
+import rateLimit from "express-rate-limit";
 
 import { connectDB } from "./config/db.js";
 import { initBroadcaster, broadcast } from "./utils/broadcaster.js";
@@ -37,23 +39,53 @@ import uploadRoutes from "./routes/upload.routes.js";
 import auditRoutes from "./routes/audit.routes.js";
 import { encryptionMiddleware } from "./middleware/encrypt.middleware.js";
 
+// ── Validate required environment variables at startup ────────────────────────
+const IS_PROD = process.env.NODE_ENV === "production";
+if (IS_PROD) {
+  const required = ["MONGODB_URI", "JWT_SECRET", "ENCRYPTION_KEY"];
+  const missing = required.filter((k) => !process.env[k]);
+  if (missing.length) {
+    console.error(`[STARTUP] Missing required env vars: ${missing.join(", ")}`);
+    process.exit(1);
+  }
+}
+
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
 
-// Connect to Database
-connectDB();
+// ── Security headers ──────────────────────────────────────────────────────────
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }, // allow image loads from frontend
+  contentSecurityPolicy: false, // CSP managed at CDN/Vercel level
+}));
 
-// Init Broadcaster
-initBroadcaster(server);
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,
+  message: { success: false, message: "Too many login attempts. Please try again in 15 minutes." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
-// Middleware
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 300,
+  message: { success: false, message: "Too many requests. Please slow down." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use("/api/auth/login", authLimiter);
+app.use("/api", apiLimiter);
+
+// ── CORS ──────────────────────────────────────────────────────────────────────
 const ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://localhost:5174",
   "https://inventory-management-system-v1-fron.vercel.app",
   "https://inventory-management-system--v1.vercel.app",
-  // Extra origins from env (comma-separated) — set on Render dashboard
   ...(process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
     : []),
@@ -61,7 +93,6 @@ const ALLOWED_ORIGINS = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow server-to-server / Postman requests (no Origin header)
     if (!origin) return callback(null, true);
     if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
     callback(new Error(`CORS: origin "${origin}" not allowed`));
@@ -70,20 +101,23 @@ app.use(cors({
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
   allowedHeaders: ["Content-Type", "Authorization", "x-enc"],
 }));
-app.use(express.json());
+
+// ── Body parsing & cookies ────────────────────────────────────────────────────
+app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
-app.use(morgan("dev"));
-// AES-256 request decrypt / response encrypt (opt-in via "x-enc: 1" header)
+app.use(morgan(IS_PROD ? "combined" : "dev"));
 app.use(encryptionMiddleware);
 
-// Serve static uploads
+// ── Static uploads ────────────────────────────────────────────────────────────
 const uploadDir = path.join(process.cwd(), "uploads");
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 app.use("/uploads", express.static(uploadDir));
 
-// Mount Routes
+// ── Connect DB & init broadcaster ─────────────────────────────────────────────
+connectDB();
+initBroadcaster(server);
+
+// ── API routes ────────────────────────────────────────────────────────────────
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/role-permissions", rolePermissionRoutes);
@@ -95,7 +129,7 @@ app.use("/api/material-requirements", mrRoutes);
 app.use("/api/pos", poRoutes);
 app.use("/api/quotations", quotationRoutes);
 app.use("/api/grn", grnRoutes);
-app.use("/api", transactionRoutes); // Maps /transactions and /gate-passes
+app.use("/api", transactionRoutes);
 app.use("/api/stock-check", stockCheckRoutes);
 app.use("/api", settingRoutes);
 app.use("/api/notifications", notificationRoutes);
@@ -104,7 +138,7 @@ app.use("/api/public", publicRoutes);
 app.use("/api", uploadRoutes);
 app.use("/api/audit-logs", auditRoutes);
 
-// Incoming Webhook (public)
+// ── n8n Incoming Webhook ──────────────────────────────────────────────────────
 app.post("/api/webhook/n8n", async (req, res) => {
   try {
     const signature = req.headers["x-webhook-secret"];
@@ -120,7 +154,6 @@ app.post("/api/webhook/n8n", async (req, res) => {
       const PurchaseOrder = mongoose.model("PurchaseOrder");
       const po = await PurchaseOrder.findOneAndUpdate({ id: poId }, { $set: { status } }, { new: true });
       if (!po) throw new Error(`PO ${poId} not found`);
-
       broadcast({ type: "DATA_UPDATED", path: "pos" });
       res.json({ success: true, message: `PO ${poId} status updated to ${status}` });
     } else if (action === "APPROVE_STOCK_CHECK") {
@@ -131,7 +164,6 @@ app.post("/api/webhook/n8n", async (req, res) => {
         { new: true }
       );
       if (!report) throw new Error(`Report ${reportId} not found`);
-
       broadcast({ type: "DATA_UPDATED", path: "stock-check-reports" });
       res.json({ success: true, message: `Stock check ${reportId} approved` });
     } else if (action === "NOTIFY") {
@@ -149,28 +181,36 @@ app.post("/api/webhook/n8n", async (req, res) => {
   }
 });
 
-// Seed API Route
-app.post("/api/seed", async (req, res) => {
-  try {
-    const { action } = req.body;
-    if (action === "clear-cache") {
-      res.json({ success: true, message: "Cache cleared" });
-    } else {
-      res.json({ success: true, message: "Seed complete" });
-    }
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
-  }
+// ── Global error handler ──────────────────────────────────────────────────────
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error("[Error]", err);
+  const status = err.status || 500;
+  const message = IS_PROD && status === 500 ? "Internal server error" : (err.message || "Internal server error");
+  res.status(status).json({ success: false, message });
 });
 
+// ── Start server ──────────────────────────────────────────────────────────────
 server.listen(PORT, () => {
-  console.log(`IMS backend server running on port ${PORT}`);
+  console.log(`IMS backend running on port ${PORT} [${process.env.NODE_ENV || "development"}]`);
 });
-// Nodemon reloaded database configuration
 
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+const shutdown = async (signal: string) => {
+  console.log(`[${signal}] Shutting down gracefully...`);
+  server.close(async () => {
+    await mongoose.connection.close();
+    console.log("MongoDB connection closed. Bye.");
+    process.exit(0);
+  });
+  setTimeout(() => { console.error("Forced shutdown after timeout"); process.exit(1); }, 10000);
+};
 
-// Trigger nodemon restart
-
-// Trigger nodemon restart 2
-
-// Restart nodemon 3
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT",  () => shutdown("SIGINT"));
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException]", err);
+  shutdown("uncaughtException");
+});

@@ -5,19 +5,17 @@ import { User } from '../models/index.js';
 
 dotenv.config();
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://admin:12345@ac-awlxxa7-shard-00-00.wbswac0.mongodb.net:27017,ac-awlxxa7-shard-00-01.wbswac0.mongodb.net:27017,ac-awlxxa7-shard-00-02.wbswac0.mongodb.net:27017/ims?ssl=true&replicaSet=atlas-sjxx6b-shard-0&authSource=admin&retryWrites=true&w=majority&appName=Cluster0';
-// const MONGODB_URI = process.env.MONGO_LOCAL || 'mongodb://localhost:27017/IMS_Local';
+const MONGODB_URI = process.env.MONGODB_URI || '';
+if (!MONGODB_URI) {
+  console.error('[DB] MONGODB_URI environment variable is not set. Please configure it in your deployment environment.');
+}
 const ALLOWED_DOMAIN = (process.env.ALLOWED_DOMAIN || 'neotericgrp.in').toLowerCase().trim();
 
 export async function connectDB() {
   try {
-    if (!MONGODB_URI || MONGODB_URI.includes('localhost')) {
-      console.warn('WARNING: Using default local MongoDB URI. This will likely fail in the cloud environment.');
-      console.warn('Please set MONGODB_URI in your environment variables (Secrets panel).');
-    }
-    
+    if (!MONGODB_URI) throw new Error('MONGODB_URI is not set');
     await mongoose.connect(MONGODB_URI);
-    console.log('Connected to MongoDB');
+    console.log('[DB] Connected to MongoDB');
 
     // Ensure demo users exist
     try {
@@ -67,13 +65,11 @@ export async function connectDB() {
       ];
 
       for (const demoUser of demoUsers) {
-        console.log(`[SEED] Ensuring user: ${demoUser.email} with role: ${demoUser.role}`);
-        const result = await User.findOneAndUpdate(
+        await User.findOneAndUpdate(
           { email: demoUser.email },
           { $set: demoUser },
           { upsert: true, new: true }
         );
-        console.log(`[SEED] Result for ${demoUser.email}: ID ${result._id}, HasPassword: ${!!result.password}`);
       }
 
       // Seed initial role permissions for Super Admin so they aren't locked out if we remove the bypass

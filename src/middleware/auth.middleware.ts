@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { User, RolePermission } from '../models/index.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'neoteric-secret-key-default';
+const JWT_SECRET = process.env.JWT_SECRET || (process.env.NODE_ENV !== 'production' ? 'dev-only-secret' : '');
 
 export interface AuthenticatedRequest extends Request {
   user?: any;

@@ -88,7 +88,7 @@ export class TransactionService {
     }
 
     if (search) {
-      const searchRegex = new RegExp(search, 'i');
+      const searchRegex = new RegExp(search.replace(/[.*+?^${}()|[]\]/g, '\$&'), 'i');
       query.$or = [
         { id: searchRegex },
         { date: searchRegex },

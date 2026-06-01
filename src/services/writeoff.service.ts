@@ -11,7 +11,8 @@ export class WriteOffService {
 
     let query: any = {};
     if (search) {
-      const searchRegex = new RegExp(search, 'i');
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const searchRegex = new RegExp(escaped, 'i');
       query.$or = [
         { id: searchRegex },
         { sku: searchRegex },

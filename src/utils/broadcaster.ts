@@ -7,21 +7,14 @@ export const initBroadcaster = (server: Server) => {
   wss = new WebSocketServer({ server });
 
   wss.on('connection', (ws: WebSocket & { userRole?: string }) => {
-    console.log('Client connected to WebSocket');
-    
     ws.on('message', (message) => {
       try {
         const data = JSON.parse(message.toString());
-        if (data.type === 'REGISTER_ROLE') {
-          ws.userRole = data.role;
-          console.log(`Client registered with role: ${ws.userRole}`);
-        }
-      } catch (err) {
-        console.error('Failed to parse WebSocket message:', err);
+        if (data.type === 'REGISTER_ROLE') ws.userRole = data.role;
+      } catch {
+        // ignore malformed WS messages
       }
     });
-
-    ws.on('close', () => console.log('Client disconnected from WebSocket'));
   });
 };
 

@@ -15,7 +15,7 @@ export class MRService {
 
     let query: any = {};
     if (search) {
-      const searchRegex = new RegExp(search, 'i');
+      const searchRegex = new RegExp(search.replace(/[.*+?^${}()|[]\]/g, '\$&'), 'i');
       query.$or = [
         { id: searchRegex },
         { project: searchRegex },
@@ -197,7 +197,7 @@ export class MRService {
 
     let query: any = {};
     if (search) {
-      const searchRegex = new RegExp(search, 'i');
+      const searchRegex = new RegExp(search.replace(/[.*+?^${}()|[]\]/g, '\$&'), 'i');
       query.$or = [
         { id: searchRegex },
         { mrId: searchRegex },

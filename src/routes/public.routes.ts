@@ -66,7 +66,7 @@ const updatePublicStock = async (
 // ─── GET /api/public/inventory ────────────────────────────────────────────────
 router.get("/inventory", async (req, res) => {
   try {
-    const search = req.query.search as string;
+    const search = (req.query.search as string || "").replace(/[.*+?^${}()|[]\]/g, "\$&");
     const filter = req.query.filter as string;
     const page   = parseInt(req.query.page  as string) || 1;
     const limit  = parseInt(req.query.limit as string) || 100;
@@ -112,7 +112,7 @@ router.post("/inventory", async (req, res) => {
 // ─── GET /api/public/catalogue ────────────────────────────────────────────────
 router.get("/catalogue", async (req, res) => {
   try {
-    const search = req.query.search as string;
+    const search = (req.query.search as string || "").replace(/[.*+?^${}()|[]\]/g, "\$&");
     const filter = req.query.filter as string;
     const page   = parseInt(req.query.page  as string) || 1;
     const limit  = parseInt(req.query.limit as string) || 100;
@@ -143,7 +143,7 @@ router.get("/catalogue", async (req, res) => {
 // ─── GET /api/public/material-requirements ────────────────────────────────────
 router.get("/material-requirements", async (req, res) => {
   try {
-    const search = req.query.search as string;
+    const search = (req.query.search as string || "").replace(/[.*+?^${}()|[]\]/g, "\$&");
     const filter = req.query.filter as string;
     const unused = req.query.unused as string;
     const page   = parseInt(req.query.page  as string) || 1;
@@ -204,7 +204,7 @@ router.get("/quotations", async (req, res) => {
 // ─── GET /api/public/suppliers ────────────────────────────────────────────────
 router.get("/suppliers", async (req, res) => {
   try {
-    const search = req.query.search as string;
+    const search = (req.query.search as string || "").replace(/[.*+?^${}()|[]\]/g, "\$&");
     const limit  = parseInt(req.query.limit as string) || 2000;
     let query: any = { status: "Active" };
 
