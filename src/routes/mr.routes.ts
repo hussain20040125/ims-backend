@@ -15,7 +15,7 @@ const router = Router();
 router.get('/', authenticate, async (req: any, res) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 10000;
+    const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
     const skip = (page - 1) * limit;
     const search = req.query.search as string;
     const unused = req.query.unused === 'true';
@@ -95,6 +95,17 @@ router.get('/', authenticate, async (req: any, res) => {
     
     if (filterStr) {
       const { startDate: _, endDate: __, ...restFilter } = parsedFilter;
+      
+      if (restFilter.status === "PO Phase") {
+        const linkedMrIds = await mongoose.model("PurchaseOrder").find({ mrId: { $nin: [null, ""] } }).distinct('mrId');
+        if (query.id) {
+          query.id = { ...query.id, $in: linkedMrIds };
+        } else {
+          query.id = { $in: linkedMrIds };
+        }
+        delete restFilter.status;
+      }
+      
       query = { ...query, ...restFilter };
     }
 

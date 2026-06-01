@@ -11,6 +11,7 @@ import cookieParser from "cookie-parser";
 import morgan from "morgan";
 import mongoose from "mongoose";
 import rateLimit from "express-rate-limit";
+import compression from "compression";
 
 import { connectDB } from "./config/db.js";
 import { initBroadcaster, broadcast } from "./utils/broadcaster.js";
@@ -53,6 +54,9 @@ if (IS_PROD) {
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
+
+// ── Gzip compression (10-15x smaller responses) ───────────────────────────────
+app.use(compression({ level: 6, threshold: 1024 }));
 
 // ── Security headers ──────────────────────────────────────────────────────────
 app.use(helmet({
@@ -137,6 +141,9 @@ app.use("/api/writeoffs", writeoffRoutes);
 app.use("/api/public", publicRoutes);
 app.use("/api", uploadRoutes);
 app.use("/api/audit-logs", auditRoutes);
+
+// ── Health check (used by keep-alive pings and load balancers) ────────────────
+app.get("/api/health", (_req, res) => res.json({ status: "ok", ts: Date.now() }));
 
 // ── n8n Incoming Webhook ──────────────────────────────────────────────────────
 app.post("/api/webhook/n8n", async (req, res) => {

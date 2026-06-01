@@ -43,7 +43,7 @@ export const createCrudRoutes = (
   router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const page = parseInt(req.query.page as string) || 1;
-      const limit = parseInt(req.query.limit as string) || 10000;
+      const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
       const skip = (page - 1) * limit;
       const search = req.query.search as string;
       const filterStr = req.query.filter as string;
@@ -145,12 +145,13 @@ export const createCrudRoutes = (
       broadcast({ type: 'DATA_UPDATED', path: resourceName });
       logAudit(req.user, 'CREATE', resourceName, item[idField] || item.id);
 
-      await createNotification({
+      // Fire notifications asynchronously — don't block the response
+      createNotification({
         message: `New ${resourceName.toUpperCase()} created by ${req.user.name}`,
         severity: 'success',
         path: resourceName,
         senderId: req.user._id
-      });
+      }).catch(() => {});
       
       // Targeted notifications for approvals
       if (resourceName === 'material-requirements' && item.status === 'Store Pending') {

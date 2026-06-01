@@ -700,7 +700,7 @@ router.use('/outward-returns', outwardReturnCrudRouter);
 router.get('/transactions', authenticate, async (req, res) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 10000;
+    const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
     const skip = (page - 1) * limit;
     const search = req.query.search as string;
     const filterStr = req.query.filter as string;

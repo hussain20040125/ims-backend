@@ -61,7 +61,7 @@ export class TransactionService {
   // --- Transactions query ---
   static async query(params: any) {
     const page = parseInt(params.page) || 1;
-    const limit = parseInt(params.limit) || 10000;
+    const limit = Math.min(parseInt(params.limit) || 100, 500);
     const skip = (page - 1) * limit;
     const search = params.search;
     const filterStr = params.filter;

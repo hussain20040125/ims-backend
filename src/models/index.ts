@@ -89,8 +89,6 @@ const SupplierSchema = new Schema({
   gst: { type: String }, // Map to gstNumber
 }, { timestamps: true });
 
-SupplierSchema.index({ id: 1 });
-SupplierSchema.index({ companyName: 1 });
 SupplierSchema.index({ name: 1 });
 SupplierSchema.index({ ownerName: 1 });
 SupplierSchema.index({ email: 1 });
@@ -248,10 +246,11 @@ const POSchema = new Schema({
   unloadingGstType: { type: String, enum: ["Inclusive", "Exclusive"], default: "Exclusive" },
 }, { timestamps: true });
 
-POSchema.index({ id: 1 });
 POSchema.index({ project: 1 });
 POSchema.index({ supplier: 1 });
 POSchema.index({ status: 1 });
+POSchema.index({ mrId: 1 });
+POSchema.index({ mrId: 1, status: 1 });
 POSchema.index({ updatedAt: -1 });
 
 export const PurchaseOrder = mongoose.model('PurchaseOrder', POSchema);
@@ -280,7 +279,6 @@ const MaterialPlanSchema = new Schema({
   items: [PlanLineItemSchema],
 }, { timestamps: true });
 
-MaterialPlanSchema.index({ id: 1 });
 MaterialPlanSchema.index({ project: 1 });
 MaterialPlanSchema.index({ status: 1 });
 MaterialPlanSchema.index({ updatedAt: -1 });
@@ -320,7 +318,6 @@ const GRNSchema = new Schema({
   personPhotos: [String],
 }, { timestamps: true });
 
-GRNSchema.index({ id: 1 });
 GRNSchema.index({ poId: 1 });
 GRNSchema.index({ project: 1 });
 GRNSchema.index({ supplier: 1 });
@@ -371,8 +368,8 @@ const InwardSchema = new Schema({
   collection: 'inwards'
 });
 
-InwardSchema.index({ id: 1 });
 InwardSchema.index({ project: 1 });
+InwardSchema.index({ grnRef: 1 });
 InwardSchema.index({ updatedAt: -1 });
 
 export const Inward = mongoose.model('Inward', InwardSchema);
@@ -416,7 +413,6 @@ const OutwardSchema = new Schema({
   poId: String
 }, { timestamps: true });
 
-OutwardSchema.index({ id: 1 });
 OutwardSchema.index({ project: 1 });
 OutwardSchema.index({ updatedAt: -1 });
 
@@ -490,7 +486,6 @@ const StockCheckReportSchema = new Schema({
   approvedBy: String,
 }, { timestamps: true });
 
-StockCheckReportSchema.index({ id: 1 });
 StockCheckReportSchema.index({ date: 1 });
 StockCheckReportSchema.index({ category: 1 });
 
@@ -539,9 +534,9 @@ const TransactionSchema = new Schema({
   poId: String,
 }, { timestamps: true });
 
-TransactionSchema.index({ id: 1 });
 TransactionSchema.index({ type: 1 });
 TransactionSchema.index({ date: -1 });
+TransactionSchema.index({ type: 1, date: -1 });
 TransactionSchema.index({ updatedAt: -1 });
 
 export const Transaction = mongoose.model('Transaction', TransactionSchema);
@@ -584,6 +579,9 @@ const RolePermissionSchema = new Schema({
   permissions: { type: [String], default: [] },
 }, { timestamps: true });
 
+RolePermissionSchema.index({ role: 1 });
+RolePermissionSchema.index({ permissions: 1 });
+
 export const RolePermission = mongoose.model('RolePermission', RolePermissionSchema);
 
 // Notification Model
@@ -598,7 +596,6 @@ const NotificationSchema = new Schema({
   path: String,
 }, { timestamps: true });
 
-NotificationSchema.index({ id: 1 });
 NotificationSchema.index({ createdAt: -1 });
 
 export const Notification = mongoose.model('Notification', NotificationSchema);
@@ -674,7 +671,6 @@ const MaterialRequirementSchema = new Schema({
   quotationLinkActive: { type: Boolean, default: true }
 }, { timestamps: true });
 
-MaterialRequirementSchema.index({ id: 1 });
 MaterialRequirementSchema.index({ project: 1 });
 MaterialRequirementSchema.index({ requesterName: 1 });
 MaterialRequirementSchema.index({ updatedAt: -1 });
@@ -700,7 +696,6 @@ const MRAllocationSchema = new Schema({
   status: { type: String, enum: ["Allocated", "Partially Issued", "Closed"], default: "Allocated" }
 }, { timestamps: true });
 
-MRAllocationSchema.index({ id: 1 });
 MRAllocationSchema.index({ mrId: 1 });
 MRAllocationSchema.index({ sku: 1 });
 
@@ -754,7 +749,6 @@ QuotationSchema.pre('save', async function() {
   }
 });
 
-QuotationSchema.index({ id: 1 });
 QuotationSchema.index({ mrId: 1 });
 QuotationSchema.index({ supplierName: 1 });
 QuotationSchema.index({ status: 1 });
