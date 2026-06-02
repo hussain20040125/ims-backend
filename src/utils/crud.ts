@@ -277,14 +277,30 @@ export const createCrudRoutes = (
       if (resourceName === 'material-requirements') {
         const poExists = await PurchaseOrder.findOne({ mrId: req.params.id });
         if (poExists) {
-          // Check if user is trying to change critical fields
-          const criticalFields = ['items', 'project', 'location', 'mrNumber'];
-          const tryingToChangeCritical = Object.keys(req.body).some(key => criticalFields.includes(key));
-          
-          if (tryingToChangeCritical) {
-            return res.status(400).json({ 
-              success: false, 
-              message: `Cannot modify items or project for Material Requirement ${req.params.id} because a Purchase Order (${poExists.id}) has already been created for it.` 
+          // Block changes to project identity fields
+          const identityFields = ['project', 'mrNumber'];
+          const tryingToChangeIdentity = Object.keys(req.body).some(key => identityFields.includes(key));
+
+          // For items, only block if qty or materialName are changing (not SKU linking / status updates)
+          let tryingToChangeItemQuantities = false;
+          if (req.body.items && Array.isArray(req.body.items) && oldItem.items) {
+            const oldItems: any[] = (oldItem.items as any[]);
+            tryingToChangeItemQuantities =
+              req.body.items.length !== oldItems.length ||
+              req.body.items.some((newItem: any, idx: number) => {
+                const oldI = oldItems[idx];
+                if (!oldI) return true;
+                return (
+                  (newItem.qty !== undefined && Number(newItem.qty) !== Number(oldI.qty)) ||
+                  (newItem.materialName !== undefined && newItem.materialName !== oldI.materialName)
+                );
+              });
+          }
+
+          if (tryingToChangeIdentity || tryingToChangeItemQuantities) {
+            return res.status(400).json({
+              success: false,
+              message: `Cannot modify item quantities or project for Material Requirement ${req.params.id} because a Purchase Order (${poExists.id}) has already been created for it.`
             });
           }
         }
@@ -333,10 +349,13 @@ export const createCrudRoutes = (
       }
       
       const data = { ...req.body };
+      // Strip Mongoose internal fields to prevent version conflicts and _id overwrites
+      delete data.__v;
+      delete data._id;
       if (data.condition && typeof data.condition === 'string') {
         data.condition = data.condition.toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase());
       }
-      
+
       Object.assign(oldItem, data);
       const item = await oldItem.save();
       broadcast({ type: 'DATA_UPDATED', path: resourceName });

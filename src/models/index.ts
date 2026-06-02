@@ -274,9 +274,16 @@ const MaterialPlanSchema = new Schema({
   project: String,
   milestone: String,
   workType: String,
+  location: String,
+  engineer: String,
+  gmAgm: String,
   date: String,
   status: { type: String, enum: ["Open", "PO Raised", "Fulfilled"], default: "Open" },
   items: [PlanLineItemSchema],
+  addOns: [{
+    date: String,
+    items: [PlanLineItemSchema]
+  }]
 }, { timestamps: true });
 
 MaterialPlanSchema.index({ project: 1 });

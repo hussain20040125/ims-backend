@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { AuthService }        from '../services/auth.service.js';
+import { AuthService } from '../services/auth.service.js';
 import { AuthenticatedRequest } from '../middleware/auth.middleware.js';
 import { logAudit } from '../utils/audit.js';
 
@@ -15,9 +15,9 @@ export class AuthController {
 
       res.cookie('token', result.token, {
         httpOnly: true,
-        secure:   IS_PROD,
+        secure: IS_PROD,
         sameSite: 'none',
-        maxAge:   24 * 60 * 60 * 1000,
+        maxAge: 24 * 60 * 60 * 1000,
       });
 
       res.json({ success: true, data: result });
@@ -31,7 +31,7 @@ export class AuthController {
     if (req.user) logAudit(req.user, 'LOGOUT', 'Auth', req.user._id.toString(), { action: 'User Logout' });
     res.clearCookie('token', {
       httpOnly: true,
-      secure:   IS_PROD,
+      secure: IS_PROD,
       sameSite: 'none',
     });
     res.json({ success: true });
