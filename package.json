@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "echo 'No build step required'",
     "dev": "nodemon --watch src --ext js,json --exec node src/server.js",
     "dev:dev": "nodemon --watch src --ext js,json --exec \"node src/server.js --env=development\"",
     "dev:prod": "nodemon --watch src --ext js,json --exec \"node src/server.js --env=production\"",
