@@ -1,0 +1,39 @@
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+import { GRN, Inward, Transaction, Outward, PurchaseOrder, MaterialRequirement } from "../models/index.js";
+import { broadcast } from "../utils/broadcaster.js";
+class POService {
+  static {
+    __name(this, "POService");
+  }
+  static async cascadeDeletePO(poId, session) {
+    const grns = await GRN.find({ poId }).session(session || null);
+    for (const grn of grns) {
+      await Inward.deleteMany({ grnRef: grn.id }).session(session || null);
+      await GRN.deleteOne({ id: grn.id }).session(session || null);
+    }
+    await Transaction.deleteMany({ poId }).session(session || null);
+    await Outward.deleteMany({ poId }).session(session || null);
+    const po = await PurchaseOrder.findOne({ id: poId }).session(session || null);
+    if (po && po.mrId) {
+      const otherPOs = await PurchaseOrder.find({ mrId: po.mrId, id: { $ne: poId } }).session(session || null);
+      if (otherPOs.length === 0) {
+        await MaterialRequirement.updateOne(
+          { id: po.mrId },
+          {
+            $set: {
+              status: "Approved by AGM",
+              approvedQuotationId: "",
+              approvedSupplier: ""
+            }
+          }
+        ).session(session || null);
+        broadcast({ type: "DATA_UPDATED", path: "material-requirements" });
+      }
+    }
+    await PurchaseOrder.deleteOne({ id: poId }).session(session || null);
+  }
+}
+export {
+  POService
+};
