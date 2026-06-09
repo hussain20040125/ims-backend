@@ -3,13 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "build": "echo 'No build step required'",
+    "start": "NODE_ENV=production node src/server.js",
     "dev": "nodemon --watch src --ext js,json --exec node src/server.js",
     "dev:dev": "nodemon --watch src --ext js,json --exec \"node src/server.js --env=development\"",
     "dev:prod": "nodemon --watch src --ext js,json --exec \"node src/server.js --env=production\"",
-    "dev:uat": "nodemon --watch src --ext js,json --exec \"node src/server.js --env=uat\"",
-    "start": "node src/server.js"
+    "dev:uat": "nodemon --watch src --ext js,json --exec \"node src/server.js --env=uat\""
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
