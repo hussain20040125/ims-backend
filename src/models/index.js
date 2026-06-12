@@ -117,6 +117,7 @@ const PaymentTimelineSchema = new Schema({
   mode: String,
   amount: Number,
   gstPct: String,
+  gstType: { type: String, enum: ["Inclusive", "Exclusive"], default: "Exclusive" },
   ifPayable: Number
 });
 const POSchema = new Schema({
@@ -579,10 +580,18 @@ const SettingsSchema = new Schema({
     address: String
   }],
   appName: { type: String, default: "Garden City" },
+  companyFullName: { type: String, default: "Neoteric Properties" },
+  footerText: { type: String, default: "" },
   logoUrl: { type: String, default: "" },
   faviconUrl: { type: String, default: "" },
   themeColor: { type: String, default: "#F97316" },
-  fontFamily: { type: String, default: "Inter" }
+  fontFamily: { type: String, default: "Inter" },
+  approvers: {
+    purchaseCoord: { type: String, default: "Vijay Kushwah" },
+    l1: { type: String, default: "Akhilesh Singh" },
+    l2: { type: String, default: "Jinesh Jain" },
+    l3: { type: String, default: "Rahul Gupta" }
+  }
 }, { timestamps: true });
 const Settings = mongoose.model("Settings", SettingsSchema);
 const CounterSchema = new Schema({

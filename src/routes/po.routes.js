@@ -11,6 +11,18 @@ import { getNextSequence } from "../utils/sequence.js";
 import { createCrudRoutes } from "../utils/crud.js";
 import { logAudit } from "../utils/audit.js";
 const router = Router();
+router.get("/occupied-mrs", authenticate, async (req, res) => {
+  try {
+    const activePOs = await PurchaseOrder.find(
+      { mrId: { $exists: true, $ne: "" }, status: { $nin: ["Rejected", "Blocked", "Cancelled"] } },
+      { mrId: 1, workType: 1, _id: 0 }
+    ).lean();
+    res.json({ success: true, data: activePOs });
+  } catch (error) {
+    logger.error("Error fetching occupied MRs:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 router.post("/", authenticate, async (req, res) => {
   try {
     if (!await serverHasPermission(req.user, "CREATE_PURCHASE_ORDER")) {
