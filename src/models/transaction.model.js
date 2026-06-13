@@ -1,0 +1,150 @@
+import mongoose, { Schema } from "mongoose";
+
+// Shared sub-schema used by Inward, Outward, InwardReturn, OutwardReturn, Transaction
+const TransactionItemSchema = new Schema({
+  sku:            { type: String, required: true },
+  itemName:       { type: String, required: true },
+  qty:            { type: Number, required: true },
+  outwardQty:     Number,
+  variance:       Number,
+  unit:           { type: String, required: true },
+  remarks:        String,
+  images:         [String],
+  challanNo:      String,
+  mrNo:           String,
+  challanPhotoUrl:  String,
+  challanPhotos:    [String],
+  condition:        String,
+});
+
+const InwardItemSchema = new Schema({
+  sku:             { type: String, required: true },
+  itemName:        { type: String, required: true },
+  qty:             { type: Number, required: true },
+  unit:            String,
+  remarks:         String,
+  images:          [String],
+  materialPhotoUrl: String,
+  challanNo:       String,
+  mrNo:            String,
+  challanPhotoUrl:  String,
+  challanPhotos:    [String],
+  condition:        String,
+});
+
+const InwardSchema = new Schema({
+  id:                 { type: String, required: true, unique: true },
+  date:               String,
+  challanNo:          String,
+  mrNo:               String,
+  supplier:           String,
+  project:            String,
+  destinationProject: String,
+  gatePassNo:         String,
+  personPhotoUrl:     String,
+  personPhotos:       [String],
+  batchId:            String,
+  status:             String,
+  type:               { type: String, enum: ["Manual","Transfer","GRN","Public Inward","Public Transfer Inward","Inward","Transfer Inward","Inward Return","Public Inward Return"], default: "Manual" },
+  challanPhotoUrl:    String,
+  challanPhotos:      [String],
+  materialPhotoUrl:   String,
+  grnRef:             String,
+  items:              { type: [InwardItemSchema], required: true },
+}, { timestamps: true, collection: "inwards" });
+
+InwardSchema.index({ project: 1 });
+InwardSchema.index({ grnRef: 1 });
+InwardSchema.index({ updatedAt: -1 });
+
+export const Inward = mongoose.model("Inward", InwardSchema);
+
+const OutwardSchema = new Schema({
+  id:                 { type: String, required: true, unique: true },
+  date:               String,
+  location:           String,
+  handoverTo:         String,
+  batchId:            String,
+  project:            String,
+  destinationProject: String,
+  gatePassNo:         String,
+  category:           String,
+  type:               { type: String, enum: ["Manual","Transfer","Public Outward","Public Transfer Outward","Outward","Transfer Outward","Outward Return","Public Outward Return"], default: "Manual" },
+  materialPhotoUrl:   String,
+  handoverPhotoUrl:   String,
+  personPhotoUrl:     String,
+  personPhotos:       [String],
+  personName:         String,
+  items:              { type: [TransactionItemSchema], required: true },
+  mrId:               String,
+  poId:               String,
+}, { timestamps: true });
+
+OutwardSchema.index({ project: 1 });
+OutwardSchema.index({ updatedAt: -1 });
+
+export const Outward = mongoose.model("Outward", OutwardSchema);
+
+const InwardReturnSchema = new Schema({
+  id:               { type: String, required: true, unique: true },
+  date:             { type: String, required: true },
+  condition:        { type: String, enum: ["New","Good","Needs Repair","Damaged","NEW","GOOD","NEEDS REPAIR","DAMAGED"], default: "Good" },
+  supplier:         { type: String, required: true },
+  remarks:          String,
+  handoverTo:       String,
+  materialPhotoUrl: String,
+  challanPhotoUrl:  String,
+  items:            { type: [TransactionItemSchema], required: true },
+}, { timestamps: true });
+
+export const InwardReturn = mongoose.model("InwardReturn", InwardReturnSchema);
+
+const OutwardReturnSchema = new Schema({
+  id:               { type: String, required: true, unique: true },
+  date:             { type: String, required: true },
+  condition:        { type: String, enum: ["New","Good","Needs Repair","Damaged","NEW","GOOD","NEEDS REPAIR","DAMAGED"], default: "Good" },
+  sourceSite:       { type: String, required: true },
+  remarks:          String,
+  handoverFrom:     String,
+  personName:       String,
+  personPhotoUrl:   String,
+  personPhotos:     [String],
+  materialPhotoUrl: String,
+  items:            { type: [TransactionItemSchema], required: true },
+}, { timestamps: true });
+
+export const OutwardReturn = mongoose.model("OutwardReturn", OutwardReturnSchema);
+
+const TransactionSchema = new Schema({
+  id:   { type: String, required: true, unique: true },
+  type: { type: String, required: true, enum: ["Inward","Outward","Inward Return","Outward Return","Public Inward","Public Outward","Public Inward Return","Public Outward Return","Transfer Inward","Transfer Outward","Public Transfer Inward","Public Transfer Outward","Transfer","GRN"] },
+  date:               { type: String, required: true },
+  items:              { type: [TransactionItemSchema], required: true },
+  project:            String,
+  destinationProject: String,
+  gatePassNo:         String,
+  supplier:           String,
+  location:           String,
+  handoverTo:         String,
+  handoverFrom:       String,
+  sourceSite:         String,
+  createdBy:          String,
+  status:             { type: String, default: "Completed" },
+  linkId:             String,
+  materialPhotoUrl:   String,
+  challanPhotoUrl:    String,
+  challanPhotos:      [String],
+  handoverPhotoUrl:   String,
+  personPhotoUrl:     String,
+  personPhotos:       [String],
+  personName:         String,
+  mrId:               String,
+  poId:               String,
+}, { timestamps: true });
+
+TransactionSchema.index({ type: 1 });
+TransactionSchema.index({ date: -1 });
+TransactionSchema.index({ type: 1, date: -1 });
+TransactionSchema.index({ updatedAt: -1 });
+
+export const Transaction = mongoose.model("Transaction", TransactionSchema);
