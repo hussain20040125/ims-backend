@@ -2,14 +2,23 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 import { logger } from "../utils/logger.js";
 import { Router } from "express";
+import path from "path";
+import fs from "fs";
+import multer from "multer";
 import { PurchaseOrder, Quotation, MaterialRequirement } from "../models/index.js";
 import { authenticate, serverHasPermission } from "../middleware/auth.middleware.js";
 import { getRolesWithPermission, createNotification } from "../utils/notification.js";
-import { triggerN8nWebhook } from "../utils/webhook.js";
+import { triggerN8nWebhook, sendSlackFile } from "../utils/webhook.js";
 import { broadcast } from "../utils/broadcaster.js";
 import { getNextSequence } from "../utils/sequence.js";
 import { createCrudRoutes } from "../utils/crud.js";
 import { logAudit } from "../utils/audit.js";
+
+const pdfUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => cb(null, file.mimetype === "application/pdf"),
+});
 const router = Router();
 router.get("/occupied-mrs", authenticate, async (req, res) => {
   try {
@@ -67,14 +76,6 @@ router.post("/", authenticate, async (req, res) => {
         targetRoles: roles
       });
     }
-    await triggerN8nWebhook("NEW_PO", {
-      poId: item.id,
-      supplier: item.supplier,
-      totalValue: item.totalValue,
-      status: item.status,
-      items: item.items,
-      createdBy: req.user.name
-    });
     res.json({ success: true, data: item });
   } catch (error) {
     logger.error("Error creating PO:", error);
@@ -152,6 +153,43 @@ router.put("/:id/cancel", authenticate, async (req, res) => {
     res.status(400).json({ success: false, message: error.message });
   }
 });
+router.post("/:id/pdf-slack", authenticate, pdfUpload.single("pdf"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: "PDF file required" });
+
+    const po = await PurchaseOrder.findOne({ id: req.params.id }).lean();
+    if (!po) return res.status(404).json({ success: false, message: "PO not found" });
+
+    // Upload PDF file directly to Slack
+    const fmtRs = (n) => Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const slackCaption = `📋 *New PO: ${po.id}* | Supplier: ${po.supplier || "N/A"} | ₹${fmtRs(po.totalValue)} | ${po.status}`;
+    const pdfBuffer = req.file.buffer;
+    sendSlackFile(pdfBuffer, `${po.id}.pdf`, slackCaption).catch(err =>
+      logger.error("[Slack] sendSlackFile failed:", err)
+    );
+
+    // Fire NEW_PO webhook to N8N with complete payload
+    await triggerN8nWebhook("NEW_PO", {
+      timestamp: new Date().toISOString(),
+      poId: po.id,
+      supplier: po.supplier,
+      totalValue: po.totalValue,
+      status: po.status,
+      items: po.items,
+      createdBy: po.createdBy,
+      workType: po.workType,
+      project: po.project,
+      mrId: po.mrId,
+      priority: po.priority
+    });
+
+    res.json({ success: true, message: "Sent to Slack successfully" });
+  } catch (error) {
+    logger.error("Error in pdf-slack endpoint:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 createCrudRoutes(router, PurchaseOrder, "pos", "id", "PURCHASE_ORDERS", "PURCHASE_ORDER");
 var stdin_default = router;
 export {

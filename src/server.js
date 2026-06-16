@@ -117,6 +117,7 @@ app.use("/api/quotations", quotationRoutes);
 app.use("/api/grn", grnRoutes);
 app.use("/api", transactionRoutes);
 app.use("/api/stock-check", stockCheckRoutes);
+app.use("/api/stock-check-reports", stockCheckRoutes);
 app.use("/api", settingRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/writeoffs", writeoffRoutes);
