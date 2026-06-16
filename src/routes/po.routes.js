@@ -9,6 +9,7 @@ import { PurchaseOrder, Quotation, MaterialRequirement } from "../models/index.j
 import { authenticate, serverHasPermission } from "../middleware/auth.middleware.js";
 import { getRolesWithPermission, createNotification } from "../utils/notification.js";
 import { triggerN8nWebhook, sendSlackFile } from "../utils/webhook.js";
+import cloudinary from "../config/cloudinary.js";
 import { broadcast } from "../utils/broadcaster.js";
 import { getNextSequence } from "../utils/sequence.js";
 import { createCrudRoutes } from "../utils/crud.js";
@@ -160,15 +161,26 @@ router.post("/:id/pdf-slack", authenticate, pdfUpload.single("pdf"), async (req,
     const po = await PurchaseOrder.findOne({ id: req.params.id }).lean();
     if (!po) return res.status(404).json({ success: false, message: "PO not found" });
 
-    // Upload PDF file directly to Slack
+    const pdfBuffer = req.file.buffer;
+
+    // Upload PDF to Cloudinary (resource_type "raw" required for non-image files)
+    const cloudinaryResult = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: "IMS/pos", public_id: po.id, resource_type: "raw" },
+        (error, result) => { if (error) reject(error); else resolve(result); }
+      );
+      stream.end(pdfBuffer);
+    });
+    const pdfUrl = cloudinaryResult.secure_url;
+
+    // Upload PDF to Slack as a file (fire-and-forget — Slack sharing only)
     const fmtRs = (n) => Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const slackCaption = `📋 *New PO: ${po.id}* | Supplier: ${po.supplier || "N/A"} | ₹${fmtRs(po.totalValue)} | ${po.status}`;
-    const pdfBuffer = req.file.buffer;
     sendSlackFile(pdfBuffer, `${po.id}.pdf`, slackCaption).catch(err =>
       logger.error("[Slack] sendSlackFile failed:", err)
     );
 
-    // Fire NEW_PO webhook to N8N with complete payload
+    // Fire NEW_PO webhook to N8N with complete payload including PDF URL
     await triggerN8nWebhook("NEW_PO", {
       timestamp: new Date().toISOString(),
       poId: po.id,
@@ -180,7 +192,8 @@ router.post("/:id/pdf-slack", authenticate, pdfUpload.single("pdf"), async (req,
       workType: po.workType,
       project: po.project,
       mrId: po.mrId,
-      priority: po.priority
+      priority: po.priority,
+      pdfUrl,
     });
 
     res.json({ success: true, message: "Sent to Slack successfully" });
