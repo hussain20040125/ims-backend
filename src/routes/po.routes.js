@@ -25,7 +25,7 @@ router.get("/occupied-mrs", authenticate, async (req, res) => {
   try {
     const activePOs = await PurchaseOrder.find(
       { mrId: { $exists: true, $ne: "" }, status: { $nin: ["Rejected", "Blocked", "Cancelled"] } },
-      { mrId: 1, workType: 1, _id: 0 }
+      { mrId: 1, workType: 1, supplier: 1, _id: 0 }
     ).lean();
     res.json({ success: true, data: activePOs });
   } catch (error) {
