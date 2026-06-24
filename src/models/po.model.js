@@ -61,6 +61,7 @@ const POSchema = new Schema({
     location:      String,
     deliveryDate:  String,
     contactPerson: String,
+    contactPhone:  String,
   },
   paymentTimelines: [PaymentTimelineSchema],
   priceComparison: {
