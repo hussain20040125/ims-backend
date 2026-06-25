@@ -38,6 +38,7 @@ const QuotationSchema = new Schema({
   unloadingGstPct:   Number,
   unloadingGstType:  { type: String, enum: ["Inclusive","Exclusive"] },
   date: { type: String, default: () => new Date().toISOString().split("T")[0] },
+  linkedPoId: String,
 }, { timestamps: true });
 
 QuotationSchema.pre("save", async function () {

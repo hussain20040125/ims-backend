@@ -1,6 +1,6 @@
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
-import { GRN, Inward, Transaction, Outward, PurchaseOrder, MaterialRequirement } from "../models/index.js";
+import { GRN, Inward, Transaction, Outward, PurchaseOrder, MaterialRequirement, Quotation } from "../models/index.js";
 import { broadcast } from "../utils/broadcaster.js";
 class POService {
   static {
@@ -15,6 +15,13 @@ class POService {
     await Transaction.deleteMany({ poId }).session(session || null);
     await Outward.deleteMany({ poId }).session(session || null);
     const po = await PurchaseOrder.findOne({ id: poId }).session(session || null);
+    // Clear linkedPoId from the source quotation when PO is deleted
+    if (po && po.quotationId) {
+      await Quotation.findOneAndUpdate(
+        { id: po.quotationId },
+        { $unset: { linkedPoId: "" } }
+      ).session(session || null);
+    }
     if (po && po.mrId) {
       const otherPOs = await PurchaseOrder.find({ mrId: po.mrId, id: { $ne: poId } }).session(session || null);
       if (otherPOs.length === 0) {

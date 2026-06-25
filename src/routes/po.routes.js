@@ -5,7 +5,7 @@ import { Router } from "express";
 import path from "path";
 import fs from "fs";
 import multer from "multer";
-import { PurchaseOrder, Quotation, MaterialRequirement } from "../models/index.js";
+import { PurchaseOrder, Quotation, MaterialRequirement, Supplier } from "../models/index.js";
 import { authenticate, serverHasPermission } from "../middleware/auth.middleware.js";
 import { getRolesWithPermission, createNotification } from "../utils/notification.js";
 import { triggerN8nWebhook, sendSlackFile } from "../utils/webhook.js";
@@ -59,6 +59,14 @@ router.post("/", authenticate, async (req, res) => {
       createdBy: req.user.name,
       date: data.date || (/* @__PURE__ */ new Date()).toISOString().split("T")[0]
     });
+    // Link source quotation → set linkedPoId so only that quotation is locked
+    if (data.quotationId) {
+      await Quotation.findOneAndUpdate(
+        { id: data.quotationId },
+        { linkedPoId: customId }
+      );
+      broadcast({ type: "DATA_UPDATED", path: "quotations" });
+    }
     broadcast({ type: "DATA_UPDATED", path: "pos" });
     logAudit(req.user, "CREATE", "PurchaseOrder", item.id, { supplier: item.supplier, totalValue: item.totalValue, status: item.status });
     await createNotification({
@@ -106,10 +114,17 @@ router.put("/:id/cancel", authenticate, async (req, res) => {
       { status: "Cancelled", cancelNote: String(cancelNote).trim(), cancelledBy: req.user.name, cancelledAt }
     );
     let quotationReset = false;
+    // Clear linkedPoId from source quotation when PO is cancelled
+    if (po.quotationId) {
+      await Quotation.findOneAndUpdate(
+        { id: po.quotationId },
+        { $unset: { linkedPoId: "" } }
+      );
+    }
     if (po.mrId) {
       const mr = await MaterialRequirement.findOne({ id: po.mrId });
       if (mr) {
-        let quotationId = mr.approvedQuotationId;
+        let quotationId = po.quotationId || mr.approvedQuotationId;
         if (!quotationId && Array.isArray(mr.approvals) && mr.approvals.length > 0) {
           const match = mr.approvals.find((a) => a.category === po.workType);
           if (match) quotationId = match.quotationId;
@@ -199,6 +214,89 @@ router.post("/:id/pdf-slack", authenticate, pdfUpload.single("pdf"), async (req,
     res.json({ success: true, message: "Sent to Slack successfully" });
   } catch (error) {
     logger.error("Error in pdf-slack endpoint:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Migration: link existing POs to their source quotations via linkedPoId on quotation
+router.post("/migrate-quotation-links", authenticate, async (req, res) => {
+  try {
+    const activePOs = await PurchaseOrder.find({
+      mrId: { $exists: true, $ne: "" },
+      status: { $nin: ["Rejected", "Blocked", "Cancelled"] }
+    }).lean();
+
+    const allSuppliers = await Supplier.find({}).lean();
+    const supplierMap = new Map(
+      allSuppliers.map(s => [s.id || s._id?.toString(), (s.companyName || s.name || "").toLowerCase()])
+    );
+
+    let linked = 0;
+    for (const po of activePOs) {
+      // PO already has quotationId — just ensure linkedPoId is set on the quotation
+      if (po.quotationId) {
+        await Quotation.findOneAndUpdate(
+          { id: po.quotationId },
+          { linkedPoId: po.id }
+        );
+        continue;
+      }
+
+      // Find candidates: same MR + category + not already linked to a different PO
+      const poSupplierName = supplierMap.get(po.supplier) || (po.supplier || "").toLowerCase();
+      const poDeliveryDate = (po.deliveryDetails?.deliveryDate || "").split("T")[0];
+
+      const candidates = await Quotation.find({
+        mrId: po.mrId,
+        $or: [
+          { linkedPoId: { $exists: false } },
+          { linkedPoId: "" },
+          { linkedPoId: po.id } // already correctly linked
+        ]
+      }).lean();
+
+      // Filter by category
+      const categoryMatches = candidates.filter(q =>
+        !po.workType || !q.category || q.category === po.workType
+      );
+
+      // Filter by supplier name
+      const supplierMatches = categoryMatches.filter(q => {
+        const qName = (q.supplierName || "").toLowerCase();
+        return qName === poSupplierName || (poSupplierName && qName.includes(poSupplierName));
+      });
+
+      if (!supplierMatches.length) continue;
+
+      // Prefer approved, then match by totalAmount (±₹2 tolerance)
+      const approved = supplierMatches.filter(q => q.status === "Approved");
+      const pool = approved.length ? approved : supplierMatches;
+      const amountMatch = pool.filter(q => Math.abs((q.totalAmount || 0) - (po.totalValue || 0)) <= 2);
+      const afterAmount = amountMatch.length ? amountMatch : pool;
+
+      // Further narrow by delivery date if available
+      const deliveryMatch = poDeliveryDate
+        ? afterAmount.filter(q => (q.deliveryDate || "").split("T")[0] === poDeliveryDate)
+        : [];
+      const final = deliveryMatch.length ? deliveryMatch : afterAmount;
+
+      // Pick earliest quotation ID among finalists
+      final.sort((a, b) => (a.id < b.id ? -1 : 1));
+      const winner = final[0];
+
+      if (winner) {
+        // Clear any incorrect previous link for this PO first
+        await Quotation.updateMany({ linkedPoId: po.id, id: { $ne: winner.id } }, { $unset: { linkedPoId: "" } });
+        await Quotation.findOneAndUpdate({ id: winner.id }, { linkedPoId: po.id });
+        await PurchaseOrder.findOneAndUpdate({ id: po.id }, { quotationId: winner.id });
+        linked++;
+      }
+    }
+
+    broadcast({ type: "DATA_UPDATED", path: "quotations" });
+    res.json({ success: true, message: `Migration complete. Linked ${linked} PO(s) to quotations.`, linked });
+  } catch (error) {
+    logger.error("Error in migrate-quotation-links:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
