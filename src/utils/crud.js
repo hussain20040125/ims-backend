@@ -107,7 +107,7 @@ const createCrudRoutes = /* @__PURE__ */ __name((router, model, resourceName, id
       const data = { ...req.body };
       if (resourceName === "material-requirements") {
         const seq = await getNextSequence("MR");
-        data.id = `MR-2026-${seq.toString().padStart(4, "0")}`;
+        data.id = `MR-${new Date().getFullYear()}-${seq}`;
         data.mrNumber = data.id;
       }
       if (data.condition && typeof data.condition === "string") {
