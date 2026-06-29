@@ -23,6 +23,12 @@ const SettingsSchema = new Schema({
     l2:            { type: String, default: "Jinesh Jain" },
     l3:            { type: String, default: "Rahul Gupta" },
   },
+  bypassApprovals: {
+    l1: { type: Boolean, default: false },
+    l2: { type: Boolean, default: false },
+    l3: { type: Boolean, default: false },
+  },
+  stores: { type: [String], default: [] },
 }, { timestamps: true });
 
 export const Settings = mongoose.model("Settings", SettingsSchema);

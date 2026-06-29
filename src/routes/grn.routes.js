@@ -118,8 +118,14 @@ router.post("/", authenticate, async (req, res) => {
       if (invItem) {
         invItem.liveStock = (invItem.liveStock || 0) + item.received;
         invItem.lastProject = grnData.project;
+        if (grnData.store) {
+          const curr = Number(invItem.locationStock?.get(grnData.store) || 0);
+          invItem.locationStock.set(grnData.store, curr + item.received);
+          invItem.markModified("locationStock");
+        }
         await invItem.save({});
       } else {
+        const locStock = grnData.store ? { [grnData.store]: item.received } : {};
         await Inventory.create([{
           sku: item.sku,
           itemName: item.itemName,
@@ -127,7 +133,8 @@ router.post("/", authenticate, async (req, res) => {
           subCategory: "General",
           unit: item.unit || "NOS",
           liveStock: item.received,
-          lastProject: grnData.project
+          lastProject: grnData.project,
+          locationStock: locStock
         }]);
       }
     }

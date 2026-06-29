@@ -9,7 +9,7 @@ import { broadcast } from "../utils/broadcaster.js";
 import { createCrudRoutes } from "../utils/crud.js";
 import { logAudit } from "../utils/audit.js";
 const router = Router();
-async function updateStock(type, sku, itemName, qty, unit, category, session) {
+async function updateStock(type, sku, itemName, qty, unit, category, session, store) {
   let isPositive = false;
   let isNegative = false;
   if (["Inward", "Outward Return", "Public Inward", "Public Outward Return", "Public Transfer Inward", "Transfer Inward", "GRN"].includes(type)) {
@@ -18,18 +18,33 @@ async function updateStock(type, sku, itemName, qty, unit, category, session) {
     isNegative = true;
   }
   if (isPositive || isNegative) {
-    const inv = session ? await Inventory.findOne({ sku }) : await Inventory.findOne({ sku });
+    const inv = await Inventory.findOne({ sku });
     if (inv) {
+      const hasLocStock = inv.locationStock && inv.locationStock.size > 0;
       if (isPositive) {
         inv.totalQty = (inv.totalQty || 0) + qty;
         inv.availableQty = (inv.availableQty || 0) + qty;
+        if (store) {
+          const curr = hasLocStock ? Number(inv.locationStock.get(store) || 0) : 0;
+          inv.locationStock.set(store, curr + qty);
+          inv.markModified("locationStock");
+        }
       } else {
         inv.totalQty = (inv.totalQty || 0) - qty;
         inv.availableQty = (inv.availableQty || 0) - qty;
+        if (store) {
+          // If no locationStock yet, assume all existing stock was at this store
+          const curr = hasLocStock
+            ? Number(inv.locationStock.get(store) || 0)
+            : (inv.availableQty + qty); // inv.availableQty already decremented above, add back qty = original
+          inv.locationStock.set(store, Math.max(0, curr - qty));
+          inv.markModified("locationStock");
+        }
       }
       inv.liveStock = (inv.availableQty || 0) + (inv.allocatedQty || 0);
       await inv.save(session ? {} : void 0);
     } else if (isPositive) {
+      const locStock = store ? { [store]: qty } : {};
       await Inventory.create(
         [{
           sku,
@@ -43,7 +58,8 @@ async function updateStock(type, sku, itemName, qty, unit, category, session) {
           allocatedQty: 0,
           issuedQty: 0,
           liveStock: qty,
-          condition: "New"
+          condition: "New",
+          locationStock: locStock
         }],
         session ? {} : void 0
       );
@@ -64,7 +80,9 @@ router.post("/inward", authenticate, async (req, res) => {
         item.itemName,
         item.qty,
         item.unit,
-        body.category
+        body.category,
+        null,
+        body.store
       );
     }
     await Transaction.create({
@@ -95,10 +113,10 @@ router.put("/inward/:id", authenticate, async (req, res) => {
     const newData = { ...req.body };
     delete newData._id;
     for (const item of oldItem.items) {
-      await updateStock("Inward", item.sku, item.itemName, -item.qty, item.unit || "NOS", oldItem.category || "General");
+      await updateStock("Inward", item.sku, item.itemName, -item.qty, item.unit || "NOS", oldItem.category || "General", null, oldItem.store);
     }
     for (const item of newData.items) {
-      await updateStock("Inward", item.sku, item.itemName, item.qty, item.unit || "NOS", newData.category || "General");
+      await updateStock("Inward", item.sku, item.itemName, item.qty, item.unit || "NOS", newData.category || "General", null, newData.store);
     }
     const updated = await Inward.findOneAndUpdate({ id: req.params.id }, newData, { returnDocument: 'after' });
     await Transaction.findOneAndUpdate(
@@ -125,13 +143,13 @@ router.delete("/inward/:id", authenticate, async (req, res) => {
   }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
   }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
   }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession") };
+  }, "endSession"), inTransaction: () => true };
   session.startTransaction();
   try {
     const item = await Inward.findOne({ id: req.params.id });
     if (item) {
       for (const it of item.items) {
-        await updateStock("Inward", it.sku, it.itemName, -it.qty, it.unit || "NOS", item.category || "General", session);
+        await updateStock("Inward", it.sku, it.itemName, -it.qty, it.unit || "NOS", item.category || "General", session, item.store);
       }
       await Inward.findOneAndDelete({ id: req.params.id });
       await Transaction.findOneAndDelete({ id: req.params.id });
@@ -164,7 +182,7 @@ router.post("/outward", authenticate, async (req, res) => {
   }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
   }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
   }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession") };
+  }, "endSession"), inTransaction: () => true };
   session.startTransaction();
   try {
     const body = req.body;
@@ -219,8 +237,23 @@ router.post("/outward", authenticate, async (req, res) => {
         inv.liveStock = (inv.liveStock || 0) - item.qty;
         inv.allocatedQty = (inv.allocatedQty || 0) - fromAllocation;
         inv.issuedQty = (inv.issuedQty || 0) + item.qty;
+        if (body.store) {
+          const curr = Number(inv.locationStock?.get(body.store) || 0);
+          inv.locationStock.set(body.store, Math.max(0, curr - item.qty));
+          inv.markModified("locationStock");
+        }
         await inv.save({});
       } else {
+        const inv = await Inventory.findOne({ sku: item.sku });
+        if (!inv) throw new Error(`Inventory item not found for SKU ${item.sku}`);
+        const hasLocStock = inv.locationStock && inv.locationStock.size > 0;
+        const storeAvail = body.store
+          ? (hasLocStock ? Number(inv.locationStock.get(body.store) || 0) : inv.availableQty)
+          : inv.availableQty;
+        if (storeAvail < item.qty) {
+          const where = body.store ? ` at ${body.store}` : "";
+          throw new Error(`Insufficient stock${where} for ${item.itemName}. Available: ${storeAvail}, Requested: ${item.qty}`);
+        }
         await updateStock(
           data.type === "Transfer" ? "Transfer Outward" : "Outward",
           item.sku,
@@ -228,7 +261,8 @@ router.post("/outward", authenticate, async (req, res) => {
           item.qty,
           item.unit,
           body.category || "General",
-          session
+          session,
+          body.store
         );
       }
     }
@@ -263,19 +297,116 @@ router.put("/outward/:id", authenticate, async (req, res) => {
   }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
   }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
   }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession") };
+  }, "endSession"), inTransaction: () => true };
   session.startTransaction();
   try {
     const oldItem = await Outward.findOne({ id: req.params.id });
     if (!oldItem) throw new Error("Item not found");
     const data = req.body;
-    for (const it of oldItem.items) {
-      await updateStock("Outward", it.sku, it.itemName, -it.qty, it.unit, oldItem.category || "General", session);
+    const effectiveMrId = oldItem.mrId || oldItem.mrNo;
+    if (effectiveMrId) {
+      // MR-linked: reverse old inventory state using MR allocation fields
+      for (const it of oldItem.items) {
+        const inv = await Inventory.findOne({ sku: it.sku });
+        if (inv) {
+          let fromAllocation = 0;
+          const allocations = await MRAllocation.find({ mrId: effectiveMrId, sku: it.sku });
+          let remainingToReturn = it.qty;
+          for (const allocation of allocations) {
+            if (remainingToReturn <= 0) break;
+            const fromThisAlloc = Math.min(remainingToReturn, allocation.issuedQty || 0);
+            allocation.issuedQty = Math.max(0, (allocation.issuedQty || 0) - fromThisAlloc);
+            allocation.remainingQty = (allocation.remainingQty || 0) + fromThisAlloc;
+            allocation.status = (allocation.issuedQty || 0) === 0 ? "Allocated" : "Partially Issued";
+            await allocation.save({});
+            fromAllocation += fromThisAlloc;
+            remainingToReturn -= fromThisAlloc;
+          }
+          const mr = await MaterialRequirement.findOne({ id: effectiveMrId });
+          if (mr) {
+            const mrItem = mr.items.find((mi) => (mi.sku || "").toLowerCase() === (it.sku || "").toLowerCase());
+            if (mrItem) {
+              mrItem.issuedQty = Math.max(0, (mrItem.issuedQty || 0) - it.qty);
+              mrItem.allocatedQty = (mrItem.allocatedQty || 0) + fromAllocation;
+              const totalFulfilled = (mrItem.issuedQty || 0) + (mrItem.allocatedQty || 0);
+              if (mrItem.issuedQty >= mrItem.qty) mrItem.status = "Issued";
+              else if (totalFulfilled >= mrItem.qty) mrItem.status = "Allocated";
+              else if (totalFulfilled > 0) mrItem.status = "Partial";
+              else mrItem.status = "In Stock";
+            }
+            const allIssued = mr.items.every((mi) => (mi.issuedQty || 0) >= mi.qty);
+            const someIssued = mr.items.some((mi) => (mi.issuedQty || 0) > 0);
+            const allAllocated = mr.items.every((mi) => (mi.issuedQty || 0) + (mi.allocatedQty || 0) >= mi.qty);
+            const someAllocated = mr.items.some((mi) => (mi.issuedQty || 0) + (mi.allocatedQty || 0) > 0);
+            if (allIssued) mr.status = "Closed";
+            else if (someIssued) mr.status = "Partially Issued";
+            else if (allAllocated) mr.status = "Allocated";
+            else if (someAllocated) mr.status = "Store Pending";
+            else mr.status = "Approved";
+            await mr.save({});
+          }
+          inv.liveStock = (inv.liveStock || 0) + it.qty;
+          inv.issuedQty = Math.max(0, (inv.issuedQty || 0) - it.qty);
+          inv.allocatedQty = (inv.allocatedQty || 0) + fromAllocation;
+          await inv.save({});
+        }
+      }
+      // Apply new items using MR-linked issuance logic
+      const newMrId = data.mrId || effectiveMrId;
+      for (const it of data.items) {
+        let allocation = await MRAllocation.findOne({ mrId: newMrId, sku: it.sku });
+        const mr = await MaterialRequirement.findOne({ id: newMrId });
+        if (!mr) throw new Error("Material Requirement not found");
+        const mrItem = mr.items.find((i) => i.sku === it.sku);
+        if (!mrItem) throw new Error(`Item ${it.sku} not found in MR ${newMrId}`);
+        const totalAfterThis = (mrItem.issuedQty || 0) + it.qty;
+        if (totalAfterThis > mrItem.qty) {
+          throw new Error(`Cannot issue ${it.qty} for ${it.itemName}. Would exceed MR requested qty ${mrItem.qty}`);
+        }
+        const inv = await Inventory.findOne({ sku: it.sku });
+        if (!inv) throw new Error(`Inventory not found for SKU ${it.sku}`);
+        let fromAllocation = 0;
+        let fromAvailable = 0;
+        if (allocation && allocation.remainingQty > 0) {
+          fromAllocation = Math.min(it.qty, allocation.remainingQty);
+          fromAvailable = it.qty - fromAllocation;
+        } else {
+          fromAvailable = it.qty;
+        }
+        if (fromAvailable > 0 && inv.availableQty < fromAvailable) {
+          throw new Error(`Insufficient stock for ${it.itemName}. Available: ${inv.availableQty}, Needed: ${fromAvailable}`);
+        }
+        if (allocation) {
+          allocation.issuedQty = (allocation.issuedQty || 0) + fromAllocation;
+          allocation.remainingQty = (allocation.remainingQty || 0) - fromAllocation;
+          allocation.status = allocation.remainingQty === 0 ? "Closed" : "Partially Issued";
+          await allocation.save({});
+        }
+        mrItem.issuedQty = (mrItem.issuedQty || 0) + it.qty;
+        mrItem.status = mrItem.issuedQty >= mrItem.qty ? "Issued" : "Partial";
+        const allClosed = mr.items.every((i) => (i.issuedQty || 0) >= i.qty);
+        mr.status = allClosed ? "Closed" : "Partially Issued";
+        await mr.save({});
+        inv.liveStock = (inv.liveStock || 0) - it.qty;
+        inv.allocatedQty = (inv.allocatedQty || 0) - fromAllocation;
+        inv.issuedQty = (inv.issuedQty || 0) + it.qty;
+        await inv.save({});
+      }
+    } else {
+      // Non-MR-linked: reverse old, check stock, apply new
+      for (const it of oldItem.items) {
+        await updateStock("Outward", it.sku, it.itemName, -it.qty, it.unit, oldItem.category || "General", session);
+      }
+      for (const it of data.items) {
+        const inv = await Inventory.findOne({ sku: it.sku });
+        if (!inv) throw new Error(`Inventory not found for SKU ${it.sku}`);
+        if (inv.availableQty < it.qty) {
+          throw new Error(`Insufficient stock for ${it.itemName}. Available: ${inv.availableQty}, Requested: ${it.qty}`);
+        }
+        await updateStock("Outward", it.sku, it.itemName, it.qty, it.unit, data.category || "General", session);
+      }
     }
-    for (const it of data.items) {
-      await updateStock("Outward", it.sku, it.itemName, it.qty, it.unit, data.category || "General", session);
-    }
-    const item = await Outward.findOneAndUpdate({ id: req.params.id }, data, { returnDocument: 'after', session });
+    const item = await Outward.findOneAndUpdate({ id: req.params.id }, data, { returnDocument: 'after' });
     await Transaction.findOneAndUpdate({ id: req.params.id }, {
       ...data,
       type: data.type === "Transfer" ? "Transfer Outward" : data.type || "Outward"
@@ -304,7 +435,7 @@ router.delete("/outward/:id", authenticate, async (req, res) => {
   }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
   }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
   }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession") };
+  }, "endSession"), inTransaction: () => true };
   session.startTransaction();
   try {
     const item = await Outward.findOne({ id: req.params.id });
@@ -354,9 +485,14 @@ router.delete("/outward/:id", authenticate, async (req, res) => {
           inv.liveStock = (inv.liveStock || 0) + it.qty;
           inv.issuedQty = Math.max(0, (inv.issuedQty || 0) - it.qty);
           inv.allocatedQty = (inv.allocatedQty || 0) + fromAllocation;
+          if (item.store) {
+            const curr = Number(inv.locationStock?.get(item.store) || 0);
+            inv.locationStock.set(item.store, curr + it.qty);
+            inv.markModified("locationStock");
+          }
           await inv.save({});
         } else {
-          await updateStock("Outward", it.sku, it.itemName, -it.qty, it.unit, item.category || "General", session);
+          await updateStock("Outward", it.sku, it.itemName, -it.qty, it.unit, item.category || "General", session, item.store);
         }
       }
       await Outward.findOneAndDelete({ id: req.params.id });
@@ -392,14 +528,14 @@ router.post("/inward-returns", authenticate, async (req, res) => {
   }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
   }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
   }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession") };
+  }, "endSession"), inTransaction: () => true };
   session.startTransaction();
   try {
     const data = req.body;
     if (!data.items || !Array.isArray(data.items)) throw new Error("Items array required");
     const item = await InwardReturn.create([data]);
     for (const it of data.items) {
-      await updateStock("Inward Return", it.sku, it.itemName, it.qty, it.unit, data.category || "General", session);
+      await updateStock("Inward Return", it.sku, it.itemName, it.qty, it.unit, data.category || "General", session, data.store);
     }
     await Transaction.create([{ ...data, type: "Inward Return" }]);
     await session.commitTransaction();
@@ -433,19 +569,19 @@ router.put("/inward-returns/:id", authenticate, async (req, res) => {
   }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
   }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
   }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession") };
+  }, "endSession"), inTransaction: () => true };
   session.startTransaction();
   try {
     const oldItem = await InwardReturn.findOne({ id: req.params.id });
     if (!oldItem) throw new Error("Item not found");
     const data = req.body;
     for (const it of oldItem.items) {
-      await updateStock("Inward Return", it.sku, it.itemName, -it.qty, it.unit, "General", session);
+      await updateStock("Inward Return", it.sku, it.itemName, -it.qty, it.unit, "General", session, oldItem.store);
     }
     for (const it of data.items) {
-      await updateStock("Inward Return", it.sku, it.itemName, it.qty, it.unit, "General", session);
+      await updateStock("Inward Return", it.sku, it.itemName, it.qty, it.unit, "General", session, data.store);
     }
-    const item = await InwardReturn.findOneAndUpdate({ id: req.params.id }, data, { returnDocument: 'after', session });
+    const item = await InwardReturn.findOneAndUpdate({ id: req.params.id }, data, { returnDocument: 'after' });
     await Transaction.findOneAndUpdate({ id: req.params.id }, { ...data, type: "Inward Return" });
     await session.commitTransaction();
     broadcast({ type: "DATA_UPDATED", path: "inward-returns" });
@@ -471,13 +607,13 @@ router.delete("/inward-returns/:id", authenticate, async (req, res) => {
   }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
   }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
   }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession") };
+  }, "endSession"), inTransaction: () => true };
   session.startTransaction();
   try {
     const item = await InwardReturn.findOne({ id: req.params.id });
     if (item) {
       for (const it of item.items) {
-        await updateStock("Inward Return", it.sku, it.itemName, -it.qty, it.unit, "General", session);
+        await updateStock("Inward Return", it.sku, it.itemName, -it.qty, it.unit, "General", session, item.store);
       }
       await InwardReturn.findOneAndDelete({ id: req.params.id });
       await Transaction.findOneAndDelete({ id: req.params.id });
@@ -510,14 +646,14 @@ router.post("/outward-returns", authenticate, async (req, res) => {
   }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
   }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
   }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession") };
+  }, "endSession"), inTransaction: () => true };
   session.startTransaction();
   try {
     const data = req.body;
     if (!data.items || !Array.isArray(data.items)) throw new Error("Items array required");
     const item = await OutwardReturn.create([data]);
     for (const it of data.items) {
-      await updateStock("Outward Return", it.sku, it.itemName, it.qty, it.unit, data.category || "General", session);
+      await updateStock("Outward Return", it.sku, it.itemName, it.qty, it.unit, data.category || "General", session, data.store);
     }
     await Transaction.create([{ ...data, type: "Outward Return" }]);
     await session.commitTransaction();
@@ -551,16 +687,23 @@ router.put("/outward-returns/:id", authenticate, async (req, res) => {
   }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
   }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
   }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession") };
+  }, "endSession"), inTransaction: () => true };
   session.startTransaction();
   try {
     const oldItem = await OutwardReturn.findOne({ id: req.params.id });
     if (!oldItem) throw new Error("Item not found");
     const data = req.body;
-    const item = await OutwardReturn.findOneAndUpdate({ id: req.params.id }, data, { returnDocument: 'after', session });
+    for (const it of oldItem.items) {
+      await updateStock("Outward Return", it.sku, it.itemName, -it.qty, it.unit, oldItem.category || "General", session, oldItem.store);
+    }
+    for (const it of data.items) {
+      await updateStock("Outward Return", it.sku, it.itemName, it.qty, it.unit, data.category || "General", session, data.store);
+    }
+    const item = await OutwardReturn.findOneAndUpdate({ id: req.params.id }, data, { returnDocument: 'after' });
     await Transaction.findOneAndUpdate({ id: req.params.id }, { ...data, type: "Outward Return" });
     await session.commitTransaction();
     broadcast({ type: "DATA_UPDATED", path: "outward-returns" });
+    broadcast({ type: "DATA_UPDATED", path: "inventory" });
     broadcast({ type: "DATA_UPDATED", path: "transactions" });
     await triggerN8nWebhook("OUTWARD_RETURN_UPDATE", {
       transactionId: req.params.id,
@@ -581,13 +724,13 @@ router.delete("/outward-returns/:id", authenticate, async (req, res) => {
   }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
   }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
   }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession") };
+  }, "endSession"), inTransaction: () => true };
   session.startTransaction();
   try {
     const item = await OutwardReturn.findOne({ id: req.params.id });
     if (item) {
       for (const it of item.items) {
-        await updateStock("Outward Return", it.sku, it.itemName, -it.qty, it.unit, "General", session);
+        await updateStock("Outward Return", it.sku, it.itemName, -it.qty, it.unit, "General", session, item.store);
       }
       await OutwardReturn.findOneAndDelete({ id: req.params.id });
       await Transaction.findOneAndDelete({ id: req.params.id });
@@ -749,7 +892,7 @@ router.delete("/transactions/:id", authenticate, async (req, res) => {
   }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
   }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
   }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession") };
+  }, "endSession"), inTransaction: () => true };
   session.startTransaction();
   try {
     const tx = await Transaction.findOne({ id: req.params.id });

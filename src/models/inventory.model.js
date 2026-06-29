@@ -12,9 +12,10 @@ const InventorySchema = new Schema({
   allocatedQty: { type: Number, default: 0 },      // Layer 2: Reserved/Locked for MR
   issuedQty:    { type: Number, default: 0 },      // Layer 3: Physically moved out
   liveStock:    { type: Number, default: 0 },      // Legacy/Compatibility
-  condition:    { type: String, enum: ["New","Good","Needs Repair","Damaged","NEW","GOOD","NEEDS REPAIR","DAMAGED"], default: "New" },
-  sourceSite:   String,
-  lastProject:  String,
+  condition:     { type: String, enum: ["New","Good","Needs Repair","Damaged","NEW","GOOD","NEEDS REPAIR","DAMAGED"], default: "New" },
+  sourceSite:    String,
+  lastProject:   String,
+  locationStock: { type: Map, of: Number, default: {} },
 }, { timestamps: true });
 
 InventorySchema.pre("save", async function () {
