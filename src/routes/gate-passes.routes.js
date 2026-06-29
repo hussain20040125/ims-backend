@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { Outward, Inward } from "../models/index.js";
+import { Outward, Inward, Transaction } from "../models/index.js";
 import { authenticate } from "../middleware/auth.middleware.js";
 
 const router = Router();
@@ -8,21 +8,23 @@ const router = Router();
 // Returns Transfer Outward gate passes that have not yet been received (no matching Transfer Inward)
 router.get("/available", authenticate, async (req, res) => {
   try {
-    const outwards = await Outward.find({
-      type: { $in: ["Transfer Outward", "Public Transfer Outward"] },
-      gatePassNo: { $exists: true, $ne: "" }
-    }).lean();
-
-    // Find gate pass numbers already received via Transfer Inward
-    const inwards = await Inward.find({
-      type: { $in: ["Transfer Inward", "Public Transfer Inward"] },
-      gatePassNo: { $exists: true, $ne: "" }
-    }).lean();
-
-    const receivedGatePasses = new Set(inwards.map((i) => i.gatePassNo).filter(Boolean));
-
-    const available = outwards.filter((o) => o.gatePassNo && !receivedGatePasses.has(o.gatePassNo));
-
+    const INVALID_GP = ["", "NA", "N/A", "na", "n/a", "null", "undefined"];
+    const OUTWARD_TYPES = ["Transfer Outward", "Public Transfer Outward"];
+    const INWARD_TYPES_TF = ["Transfer Inward", "Public Transfer Inward"];
+    const [txOutwards, dbOutwards, txInwards, dbInwards] = await Promise.all([
+      Transaction.find({ type: { $in: OUTWARD_TYPES }, gatePassNo: { $exists: true, $nin: INVALID_GP } }).lean(),
+      Outward.find({ type: { $in: OUTWARD_TYPES }, gatePassNo: { $exists: true, $nin: INVALID_GP } }).lean(),
+      Transaction.find({ type: { $in: INWARD_TYPES_TF }, gatePassNo: { $exists: true, $nin: INVALID_GP } }).lean(),
+      Inward.find({ type: { $in: INWARD_TYPES_TF }, gatePassNo: { $exists: true, $nin: INVALID_GP } }).lean()
+    ]);
+    const seenOutward = new Set();
+    const allOutwards = [...txOutwards, ...dbOutwards].filter((o) => {
+      if (!o.gatePassNo || seenOutward.has(o.gatePassNo)) return false;
+      seenOutward.add(o.gatePassNo);
+      return true;
+    });
+    const receivedGPs = new Set([...txInwards, ...dbInwards].map((i) => i.gatePassNo).filter(Boolean));
+    const available = allOutwards.filter((o) => !receivedGPs.has(o.gatePassNo));
     res.json({ success: true, data: available });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });

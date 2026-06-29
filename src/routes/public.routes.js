@@ -463,6 +463,30 @@ router.post("/material-requirement", async (req, res) => {
     res.status(400).json({ success: false, message: error.message });
   }
 });
+router.get("/gate-passes/available", async (req, res) => {
+  try {
+    const INVALID_GP = ["", "NA", "N/A", "na", "n/a", "null", "undefined"];
+    const OUTWARD_TYPES = ["Transfer Outward", "Public Transfer Outward"];
+    const INWARD_TYPES_TF = ["Transfer Inward", "Public Transfer Inward"];
+    const [txOutwards, dbOutwards, txInwards, dbInwards] = await Promise.all([
+      Transaction.find({ type: { $in: OUTWARD_TYPES }, gatePassNo: { $exists: true, $nin: INVALID_GP } }).lean(),
+      Outward.find({ type: { $in: OUTWARD_TYPES }, gatePassNo: { $exists: true, $nin: INVALID_GP } }).lean(),
+      Transaction.find({ type: { $in: INWARD_TYPES_TF }, gatePassNo: { $exists: true, $nin: INVALID_GP } }).lean(),
+      Inward.find({ type: { $in: INWARD_TYPES_TF }, gatePassNo: { $exists: true, $nin: INVALID_GP } }).lean()
+    ]);
+    const seenOutward = new Set();
+    const allOutwards = [...txOutwards, ...dbOutwards].filter((o) => {
+      if (!o.gatePassNo || seenOutward.has(o.gatePassNo)) return false;
+      seenOutward.add(o.gatePassNo);
+      return true;
+    });
+    const receivedGPs = new Set([...txInwards, ...dbInwards].map((i) => i.gatePassNo).filter(Boolean));
+    const available = allOutwards.filter((o) => !receivedGPs.has(o.gatePassNo));
+    res.json({ success: true, data: available });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 router.post("/supplier-registration", async (req, res) => {
   try {
     const data = req.body;
