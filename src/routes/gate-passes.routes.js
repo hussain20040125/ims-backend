@@ -32,19 +32,20 @@ router.get("/available", authenticate, async (req, res) => {
 });
 
 // GET /api/gate-passes/:gatePassNo
-// Returns a specific Transfer Outward by gate pass number
+// Returns a specific Transfer Outward by gate pass number (searches both collections)
 router.get("/:gatePassNo", authenticate, async (req, res) => {
   try {
-    const outward = await Outward.findOne({
-      gatePassNo: req.params.gatePassNo,
-      type: { $in: ["Transfer Outward", "Public Transfer Outward"] }
-    }).lean();
-
-    if (!outward) {
-      return res.status(404).json({ success: false, message: `Gate pass ${req.params.gatePassNo} not found` });
+    const gp = req.params.gatePassNo;
+    const OUTWARD_TYPES = ["Transfer Outward", "Public Transfer Outward"];
+    const [txResult, dbResult] = await Promise.all([
+      Transaction.findOne({ gatePassNo: gp, type: { $in: OUTWARD_TYPES } }).lean(),
+      Outward.findOne({ gatePassNo: gp, type: { $in: OUTWARD_TYPES } }).lean()
+    ]);
+    const result = txResult || dbResult;
+    if (!result) {
+      return res.status(404).json({ success: false, message: `Gate pass ${gp} not found` });
     }
-
-    res.json({ success: true, data: outward });
+    res.json({ success: true, data: result });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }

@@ -104,6 +104,7 @@ if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 app.use("/uploads", express.static(uploadDir));
 connectDB();
 initBroadcaster(server);
+app.get("/api/health", (_req, res) => res.json({ status: "ok", ts: Date.now() }));
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/role-permissions", rolePermissionRoutes);
@@ -126,7 +127,6 @@ app.use("/api/gate-passes", gatePassRoutes);
 app.use("/api/public", publicRoutes);
 app.use("/api", uploadRoutes);
 app.use("/api/audit-logs", auditRoutes);
-app.get("/api/health", (_req, res) => res.json({ status: "ok", ts: Date.now() }));
 app.post("/api/webhook/n8n", async (req, res) => {
   try {
     const signature = req.headers["x-webhook-secret"];
