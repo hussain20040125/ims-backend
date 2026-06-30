@@ -85,13 +85,14 @@ router.post("/", authenticate, async (req, res) => {
       }))
     };
     if (!grnData.id) {
-      const lastGRN = await GRN.findOne().sort({ createdAt: -1 });
-      let nextId = 1;
-      if (lastGRN) {
-        const parts = lastGRN.id.split("-");
-        nextId = parseInt(parts[parts.length - 1] || "0") + 1;
-      }
-      grnData.id = `GRN-${String(nextId).padStart(4, "0")}`;
+      const year = new Date().getFullYear();
+      const allGRNs = await GRN.find({}, { id: 1 }).lean();
+      const maxNum = allGRNs.reduce((max, g) => {
+        const parts = (g.id || "").split("-");
+        const num = parseInt(parts[parts.length - 1] || "0");
+        return isNaN(num) ? max : Math.max(max, num);
+      }, 0);
+      grnData.id = `GRN-${year}-${String(maxNum + 1).padStart(3, "0")}`;
     }
     const grn = await GRN.create([grnData]);
     const inwardRecord = {
@@ -364,6 +365,73 @@ router.put("/:id", authenticate, async (req, res) => {
     res.status(400).json({ success: false, message: error.message });
   } finally {
     session.endSession();
+  }
+});
+router.post("/:id/receipt", authenticate, async (req, res) => {
+  try {
+    const grn = await GRN.findOne({ id: req.params.id });
+    if (!grn) return res.status(404).json({ success: false, message: "GRN not found" });
+    const receipt = {
+      date: new Date().toISOString(),
+      challan: req.body.challan,
+      mrNo: req.body.mrNo,
+      docType: req.body.docType,
+      personName: req.body.personName,
+      challanPhotos: req.body.challanPhotos || [],
+      personPhotos: req.body.personPhotos || [],
+      items: (req.body.items || []).map((i) => ({
+        sku: i.sku,
+        itemName: i.itemName,
+        received: i.received || 0,
+        images: i.images || []
+      }))
+    };
+    grn.receipts = grn.receipts || [];
+    grn.receipts.push(receipt);
+    // Recalculate cumulative received per SKU from all receipts
+    const receivedBySKU = {};
+    grn.receipts.forEach((r) => {
+      (r.items || []).forEach((item) => {
+        receivedBySKU[item.sku] = (receivedBySKU[item.sku] || 0) + (item.received || 0);
+      });
+    });
+    grn.items = grn.items.map((item) => {
+      const obj = item.toObject ? item.toObject() : { ...item };
+      const totalReceived = receivedBySKU[item.sku] || obj.received || 0;
+      return { ...obj, received: totalReceived, variance: totalReceived - (obj.ordered || 0) };
+    });
+    const hasShortage = grn.items.some((i) => i.received < i.ordered);
+    const hasExcess = grn.items.some((i) => i.received > i.ordered);
+    grn.status = hasShortage ? "Partial" : hasExcess ? "Over-Received" : "Confirmed";
+    // Update inventory for newly received items
+    for (const item of receipt.items) {
+      const inv = await Inventory.findOne({ sku: item.sku });
+      if (inv) {
+        inv.liveStock = (inv.liveStock || 0) + item.received;
+        await inv.save();
+      }
+    }
+    await grn.save();
+    // Update PO status
+    if (grn.poId) {
+      const po = await PurchaseOrder.findOne({ id: grn.poId });
+      if (po) {
+        const newPoStatus = grn.status === "Confirmed" || grn.status === "Over-Received"
+          ? "GRN Fulfilled" : "GRN Variance";
+        if (po.status !== newPoStatus) {
+          po.status = newPoStatus;
+          await po.save();
+          broadcast({ type: "DATA_UPDATED", path: "pos" });
+        }
+      }
+    }
+    logAudit(req.user, "ADD_RECEIPT", "GRN", grn.id, { challan: receipt.challan, items: receipt.items.length });
+    broadcast({ type: "DATA_UPDATED", path: "grn" });
+    broadcast({ type: "DATA_UPDATED", path: "inventory" });
+    res.json({ success: true, data: grn });
+  } catch (error) {
+    logger.error("Error adding GRN receipt:", error);
+    res.status(400).json({ success: false, message: error.message });
   }
 });
 router.delete("/:id", authenticate, async (req, res) => {

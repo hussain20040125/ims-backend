@@ -11,6 +11,24 @@ const GRNItemSchema = new Schema({
   images:    [String],
 });
 
+const GRNReceiptItemSchema = new Schema({
+  sku:      String,
+  itemName: String,
+  received: Number,
+  images:   [String],
+}, { _id: false });
+
+const GRNReceiptSchema = new Schema({
+  date:          String,
+  challan:       String,
+  mrNo:          String,
+  docType:       String,
+  personName:    String,
+  challanPhotos: [String],
+  personPhotos:  [String],
+  items:         [GRNReceiptItemSchema],
+}, { _id: false });
+
 const GRNSchema = new Schema({
   id:                 { type: String, required: true, unique: true },
   poId:               String,
@@ -23,7 +41,8 @@ const GRNSchema = new Schema({
   gatePassNo:         String,
   docType:            { type: String, enum: ["Challan","Invoice","Bilty","Gate Pass","Without Challan","Without Gate Pass"] },
   items:              [GRNItemSchema],
-  status:             { type: String, enum: ["Draft","Confirmed"], default: "Draft" },
+  status:             { type: String, enum: ["Draft","Confirmed","Partial","Over-Received"], default: "Draft" },
+  receipts:           { type: [GRNReceiptSchema], default: [] },
   materialImageUrl:   String,
   challanImageUrl:    String,
   challanPhotos:      [String],
