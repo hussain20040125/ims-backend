@@ -24,10 +24,11 @@ const router = Router();
 router.get("/occupied-mrs", authenticate, async (req, res) => {
   try {
     const activePOs = await PurchaseOrder.find(
-      { mrId: { $exists: true, $ne: "" }, status: { $nin: ["Rejected", "Blocked", "Cancelled"] } },
-      { mrId: 1, workType: 1, supplier: 1, _id: 0 }
+      { quotationId: { $exists: true, $ne: "" }, status: { $nin: ["Rejected", "Blocked", "Cancelled"] } },
+      { quotationId: 1, _id: 0 }
     ).lean();
-    res.json({ success: true, data: activePOs });
+    const data = activePOs.map((p) => p.quotationId).filter(Boolean);
+    res.json({ success: true, data });
   } catch (error) {
     logger.error("Error fetching occupied MRs:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -166,6 +167,35 @@ router.put("/:id/cancel", authenticate, async (req, res) => {
     });
   } catch (error) {
     logger.error("Error cancelling PO:", error);
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+router.post("/:id/close", authenticate, async (req, res) => {
+  try {
+    const { closedItems } = req.body;
+    const po = await PurchaseOrder.findOneAndUpdate(
+      { id: req.params.id },
+      { status: "PO Closed", ...(closedItems !== undefined ? { closedItems } : {}) },
+      { returnDocument: "after" }
+    ).lean();
+    if (!po) return res.status(404).json({ success: false, message: "PO not found" });
+    broadcast({ type: "DATA_UPDATED", path: "pos" });
+    res.json({ success: true, data: po });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+router.post("/:id/reopen", authenticate, async (req, res) => {
+  try {
+    const po = await PurchaseOrder.findOneAndUpdate(
+      { id: req.params.id, status: "PO Closed" },
+      { status: "GRN Variance", $unset: { closedItems: "" } },
+      { returnDocument: "after" }
+    ).lean();
+    if (!po) return res.status(404).json({ success: false, message: "PO not found or not in Closed status" });
+    broadcast({ type: "DATA_UPDATED", path: "pos" });
+    res.json({ success: true, data: po });
+  } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }
 });
