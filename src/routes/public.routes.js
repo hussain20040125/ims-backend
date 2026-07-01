@@ -81,7 +81,7 @@ router.get("/inventory", async (req, res) => {
     }
     const skip = (page - 1) * limit;
     const [items, total] = await Promise.all([
-      Inventory.find(query).sort({ updatedAt: -1 }).skip(skip).limit(limit).lean(),
+      Inventory.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
       Inventory.countDocuments(query)
     ]);
     res.json({ success: true, data: items, pagination: { total, page, limit, pages: Math.ceil(total / limit) } });
@@ -126,7 +126,7 @@ router.get("/catalogue", async (req, res) => {
     }
     const skip = (page - 1) * limit;
     const [items, total] = await Promise.all([
-      Catalogue.find(query).sort({ updatedAt: -1 }).skip(skip).limit(limit).lean(),
+      Catalogue.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
       Catalogue.countDocuments(query)
     ]);
     res.json({ success: true, data: items, pagination: { total, page, limit, pages: Math.ceil(total / limit) } });
@@ -161,7 +161,7 @@ router.get("/material-requirements", async (req, res) => {
     }
     const skip = (page - 1) * limit;
     const [items, total] = await Promise.all([
-      MaterialRequirement.find(query).sort({ updatedAt: -1 }).skip(skip).limit(limit).lean(),
+      MaterialRequirement.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
       MaterialRequirement.countDocuments(query)
     ]);
     res.json({ success: true, data: items, pagination: { total, page, limit, pages: Math.ceil(total / limit) } });
@@ -183,7 +183,7 @@ router.get("/quotations", async (req, res) => {
     }
     const skip = (page - 1) * limit;
     const [items, total] = await Promise.all([
-      Quotation.find(query).sort({ updatedAt: -1 }).skip(skip).limit(limit).lean(),
+      Quotation.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
       Quotation.countDocuments(query)
     ]);
     res.json({ success: true, data: items, pagination: { total, page, limit, pages: Math.ceil(total / limit) } });

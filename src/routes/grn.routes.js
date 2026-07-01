@@ -54,7 +54,7 @@ router.get("/", authenticate, async (req, res) => {
       query = { ...query, ...restFilter };
     }
     const [items, total] = await Promise.all([
-      GRN.find(query).sort({ updatedAt: -1 }).skip(skip).limit(limit).lean(),
+      GRN.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
       GRN.countDocuments(query).lean()
     ]);
     res.json({

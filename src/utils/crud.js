@@ -75,7 +75,7 @@ const createCrudRoutes = /* @__PURE__ */ __name((router, model, resourceName, id
         query = { ...query, ...restFilter };
       }
       const [items, total] = await Promise.all([
-        model.find(query).sort({ updatedAt: -1 }).skip(skip).limit(limit).lean(),
+        model.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
         model.countDocuments(query).lean()
       ]);
       res.json({

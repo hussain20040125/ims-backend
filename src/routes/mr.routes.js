@@ -73,8 +73,7 @@ router.get("/", authenticate, async (req, res) => {
         { project: searchRegex },
         { requesterName: searchRegex },
         { location: searchRegex },
-        { "items.materialName": searchRegex },
-        { "items.sku": searchRegex }
+        { purpose: searchRegex },
       ];
     }
     if (filterStr) {
