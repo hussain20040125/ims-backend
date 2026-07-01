@@ -23,11 +23,63 @@ const pdfUpload = multer({
 const router = Router();
 router.get("/occupied-mrs", authenticate, async (req, res) => {
   try {
+    const RELEASED = ["Rejected", "Blocked", "Cancelled"];
+
+    // Source 1: POs that have quotationId stored directly
     const activePOs = await PurchaseOrder.find(
-      { quotationId: { $exists: true, $ne: "" }, status: { $nin: ["Rejected", "Blocked", "Cancelled"] } },
+      { quotationId: { $exists: true, $ne: "" }, status: { $nin: RELEASED } },
       { quotationId: 1, _id: 0 }
     ).lean();
-    const data = activePOs.map((p) => p.quotationId).filter(Boolean);
+    const fromPOs = activePOs.map((p) => p.quotationId).filter(Boolean);
+
+    // Source 2: Quotations with linkedPoId (covers legacy POs that lack quotationId)
+    const linkedQuotes = await Quotation.find(
+      { linkedPoId: { $exists: true, $ne: "" } },
+      { id: 1, linkedPoId: 1, _id: 0 }
+    ).lean();
+    const linkedPoIds = [...new Set(linkedQuotes.map((q) => q.linkedPoId).filter(Boolean))];
+    const activeLinkedPoIds = linkedPoIds.length
+      ? new Set(
+          (await PurchaseOrder.find(
+            { id: { $in: linkedPoIds }, status: { $nin: RELEASED } },
+            { id: 1, _id: 0 }
+          ).lean()).map((p) => p.id)
+        )
+      : new Set();
+    const fromQuotes = linkedQuotes
+      .filter((q) => activeLinkedPoIds.has(q.linkedPoId))
+      .map((q) => q.id);
+
+    // Source 3: Legacy POs (no quotationId, no linkedPoId on quotation) — match by mrId + workType + supplier name
+    const alreadyCovered = new Set([...fromPOs, ...fromQuotes]);
+    const legacyPOs = await PurchaseOrder.find(
+      { $or: [{ quotationId: { $exists: false } }, { quotationId: "" }], mrId: { $exists: true, $ne: "" }, status: { $nin: RELEASED } },
+      { mrId: 1, workType: 1, supplier: 1, _id: 0 }
+    ).lean();
+
+    const fromLegacy = [];
+    if (legacyPOs.length) {
+      const legacyMrIds = [...new Set(legacyPOs.map((p) => p.mrId))];
+      const candidates = await Quotation.find(
+        { mrId: { $in: legacyMrIds }, id: { $nin: [...alreadyCovered] } },
+        { id: 1, mrId: 1, category: 1, supplierName: 1, _id: 0 }
+      ).lean();
+      for (const po of legacyPOs) {
+        const poSupplier = (po.supplier || "").toLowerCase();
+        const match = candidates.find((q) => {
+          if (q.mrId !== po.mrId) return false;
+          if (po.workType && q.category && q.category !== po.workType) return false;
+          const qName = (q.supplierName || "").toLowerCase();
+          return qName && poSupplier && (qName === poSupplier || qName.includes(poSupplier) || poSupplier.includes(qName));
+        });
+        if (match && !alreadyCovered.has(match.id)) {
+          fromLegacy.push(match.id);
+          alreadyCovered.add(match.id);
+        }
+      }
+    }
+
+    const data = [...new Set([...fromPOs, ...fromQuotes, ...fromLegacy])];
     res.json({ success: true, data });
   } catch (error) {
     logger.error("Error fetching occupied MRs:", error);
