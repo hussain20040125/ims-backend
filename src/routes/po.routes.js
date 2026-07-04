@@ -120,6 +120,14 @@ router.post("/", authenticate, async (req, res) => {
       );
       broadcast({ type: "DATA_UPDATED", path: "quotations" });
     }
+    // Lock the source MR — mark it as PO Raised so it no longer appears in the PO dropdown
+    if (data.mrId) {
+      await MaterialRequirement.findOneAndUpdate(
+        { id: data.mrId },
+        { status: "PO Created" }
+      );
+      broadcast({ type: "DATA_UPDATED", path: "material-requirements" });
+    }
     broadcast({ type: "DATA_UPDATED", path: "pos" });
     logAudit(req.user, "CREATE", "PurchaseOrder", item.id, { supplier: item.supplier, totalValue: item.totalValue, status: item.status });
     await createNotification({

@@ -27,7 +27,7 @@ const MaterialRequirementSchema = new Schema({
   requirementDate: String,
   date:          { type: String, required: true },
   items:         { type: [MaterialRequirementItemSchema], required: true },
-  status:        { type: String, enum: ["Draft","Pending","Rejected","Allocated","Partially Allocated","Partially Issued","Closed","Approved by Store","Approved by AGM","Store Pending","Quotation Phase"], default: "Store Pending" },
+  status:        { type: String, enum: ["Draft","Pending","Rejected","Allocated","Partially Allocated","Partially Issued","Closed","Approved by Store","Approved by AGM","Store Pending","Quotation Phase","PO Created"], default: "Store Pending" },
   approvedSupplier:    String,
   approvedQuotationId: String,
   approvals: [{
