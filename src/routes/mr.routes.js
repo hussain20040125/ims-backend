@@ -52,7 +52,7 @@ router.get("/", authenticate, async (req, res) => {
         allowedStatuses.add("Store Pending");
       }
       if (perms.includes("VIEW_MATERIAL_REQUIREMENT") || perms.includes("CREATE_MATERIAL_REQUIREMENT")) {
-        ["Approved by Store", "Approved by AGM", "Approved by Director", "Allocated", "Partially Allocated", "Partially Issued", "Closed", "Quotation Phase"].forEach((s) => allowedStatuses.add(s));
+        ["Approved by Store", "Approved by AGM", "Approved by Director", "Allocated", "Partially Allocated", "Partially Issued", "Closed", "Quotation Phase", "PO Created"].forEach((s) => allowedStatuses.add(s));
       }
       query.$or = [
         { status: { $in: Array.from(allowedStatuses) } },
