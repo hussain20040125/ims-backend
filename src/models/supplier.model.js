@@ -42,5 +42,5 @@ SupplierSchema.index({ contact: 1 });
 SupplierSchema.index({ phone: 1 });
 SupplierSchema.index({ updatedAt: -1 });
 
-export const Supplier = mongoose.model("Supplier", SupplierSchema);
+export const Supplier = mongoose.model("Supplier", SupplierSchema, "vendors");
 export const Vendor = Supplier;
