@@ -287,7 +287,7 @@ router.put("/:id", authenticate, async (req, res) => {
         await inv.save({});
       }
     }
-    const grn = await GRN.findOneAndUpdate({ id: req.params.id }, grnData, { returnDocument: 'after', session });
+    const grn = await GRN.findOneAndUpdate({ id: req.params.id }, grnData, { returnDocument: 'after' });
     await Inward.findOneAndUpdate({ grnRef: req.params.id }, {
       date: grnData.date,
       challanNo: grnData.challan,
