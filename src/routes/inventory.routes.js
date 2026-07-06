@@ -24,7 +24,7 @@ router.get("/next-sku", async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
-createCrudRoutes(router, Inventory, "inventory", "sku", void 0, "INVENTORY", 5000);
+createCrudRoutes(router, Inventory, "inventory", "sku", void 0, "INVENTORY");
 var stdin_default = router;
 export {
   stdin_default as default
