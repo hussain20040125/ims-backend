@@ -21,13 +21,13 @@ const cascadeDeleteMR = /* @__PURE__ */ __name(async (mrId) => {
   broadcast({ type: "DATA_UPDATED", path: "quotations" });
   broadcast({ type: "DATA_UPDATED", path: "mr-allocations" });
 }, "cascadeDeleteMR");
-const createCrudRoutes = /* @__PURE__ */ __name((router, model, resourceName, idField = "id", overrideBasePerm, webhookEventPrefix) => {
+const createCrudRoutes = /* @__PURE__ */ __name((router, model, resourceName, idField = "id", overrideBasePerm, webhookEventPrefix, maxLimit = 500) => {
   const basePerm = overrideBasePerm || resourceName.toUpperCase().replace(/-/g, "_");
   const singularPerm = basePerm.endsWith("S") ? basePerm.slice(0, -1) : basePerm;
   router.get("/", authenticate, async (req, res) => {
     try {
       const page = parseInt(req.query.page) || 1;
-      const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+      const limit = Math.min(parseInt(req.query.limit) || 100, maxLimit);
       const skip = (page - 1) * limit;
       const search = req.query.search;
       const filterStr = req.query.filter;

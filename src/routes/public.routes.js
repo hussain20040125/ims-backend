@@ -193,9 +193,9 @@ router.get("/quotations", async (req, res) => {
 });
 router.get("/suppliers", async (req, res) => {
   try {
-    const search = (req.query.search || "").replace(/[.*+?^${}()|[]\]/g, "$&");
+    const search = (req.query.search || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const limit = parseInt(req.query.limit) || 2e3;
-    let query = { status: "Active" };
+    let query = { status: { $ne: "Inactive" } };
     if (search) {
       query.$or = [
         { companyName: new RegExp(search, "i") },
