@@ -434,6 +434,33 @@ router.post("/:id/receipt", authenticate, async (req, res) => {
     res.status(400).json({ success: false, message: error.message });
   }
 });
+router.put("/:id/receipt/:idx", authenticate, async (req, res) => {
+  try {
+    const idx = parseInt(req.params.idx);
+    const grn = await GRN.findOne({ id: req.params.id });
+    if (!grn) return res.status(404).json({ success: false, message: "GRN not found" });
+    if (!grn.receipts || idx < 0 || idx >= grn.receipts.length)
+      return res.status(404).json({ success: false, message: "Receipt not found" });
+
+    const oldReceipt = grn.receipts[idx];
+    // Only metadata is editable — quantities are locked to avoid inventory inconsistency
+    grn.receipts[idx] = {
+      ...oldReceipt.toObject ? oldReceipt.toObject() : { ...oldReceipt },
+      challan: req.body.challan ?? oldReceipt.challan,
+      personName: req.body.personName ?? oldReceipt.personName,
+    };
+
+    grn.markModified("receipts");
+    await grn.save();
+
+    logAudit(req.user, "EDIT_RECEIPT", "GRN", grn.id, { receiptIdx: idx, challan: grn.receipts[idx].challan });
+    broadcast({ type: "DATA_UPDATED", path: "grn" });
+    res.json({ success: true, data: grn });
+  } catch (error) {
+    logger.error("Error editing GRN receipt:", error);
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
 router.delete("/:id", authenticate, async (req, res) => {
   const session = { startTransaction: /* @__PURE__ */ __name(() => {
   }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
