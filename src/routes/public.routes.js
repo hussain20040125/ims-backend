@@ -507,10 +507,12 @@ router.post("/supplier-registration", async (req, res) => {
       ...data,
       id,
       name: data.name || data.companyName,
+      supplierName: data.supplierName || data.companyName,
       contact: data.contact || data.ownerName,
       phone: data.phone || data.mobile,
       category: data.category || data.dealingProducts,
       gst: data.gst || data.gstNumber || "N/A",
+      accountNo: data.accountNo || data.accountNumber,
       status: "Active"
     });
     broadcast({ type: "DATA_UPDATED", path: "suppliers" });

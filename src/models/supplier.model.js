@@ -27,12 +27,26 @@ const SupplierSchema = new Schema({
   processCoordinator: String,
   status:             { type: String, enum: ["Active","Inactive"], default: "Active" },
   // Alias fields
-  name:     { type: String, required: true },   // = companyName
-  contact:  { type: String, required: true },   // = ownerName
-  phone:    { type: String, required: true },   // = mobile
-  category: { type: String, required: true },   // = dealingProducts
-  gst:      { type: String },                   // = gstNumber
+  name:         { type: String, required: true },   // = companyName
+  supplierName: { type: String },                   // = companyName
+  contact:      { type: String, required: true },   // = ownerName
+  phone:        { type: String, required: true },   // = mobile
+  category:     { type: String, required: true },   // = dealingProducts
+  gst:          { type: String },                   // = gstNumber
+  accountNo:    { type: String },                   // = accountNumber
 }, { timestamps: true });
+
+// Keep all alias fields in sync with their canonical counterparts on every save
+SupplierSchema.pre("save", function (next) {
+  if (this.isModified("companyName") || !this.name) this.name = this.companyName;
+  if (this.isModified("companyName") || !this.supplierName) this.supplierName = this.companyName;
+  if (this.isModified("ownerName")   || !this.contact)  this.contact  = this.ownerName;
+  if (this.isModified("mobile")      || !this.phone)    this.phone     = this.mobile;
+  if (this.isModified("dealingProducts") || !this.category) this.category = this.dealingProducts;
+  if (this.isModified("gstNumber"))   this.gst       = this.gstNumber || this.gst;
+  if (this.isModified("accountNumber") || !this.accountNo) this.accountNo = this.accountNumber;
+  next();
+});
 
 SupplierSchema.index({ name: 1 });
 SupplierSchema.index({ ownerName: 1 });
