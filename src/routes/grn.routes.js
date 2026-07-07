@@ -443,17 +443,79 @@ router.put("/:id/receipt/:idx", authenticate, async (req, res) => {
       return res.status(404).json({ success: false, message: "Receipt not found" });
 
     const oldReceipt = grn.receipts[idx];
-    // Only metadata is editable — quantities are locked to avoid inventory inconsistency
+    const oldReceiptObj = oldReceipt.toObject ? oldReceipt.toObject() : { ...oldReceipt };
+
+    // Build delta map: newQty - oldQty per SKU (for inventory adjustment)
+    const newItems = req.body.items && Array.isArray(req.body.items) ? req.body.items : null;
+    const deltaMap = {}; // sku -> delta
+    if (newItems) {
+      (oldReceiptObj.items || []).forEach(i => { deltaMap[i.sku] = -(i.received || 0); });
+      newItems.forEach(i => { deltaMap[i.sku] = (deltaMap[i.sku] || 0) + (i.received || 0); });
+    }
+
+    // Update the receipt
     grn.receipts[idx] = {
-      ...oldReceipt.toObject ? oldReceipt.toObject() : { ...oldReceipt },
-      challan: req.body.challan ?? oldReceipt.challan,
-      personName: req.body.personName ?? oldReceipt.personName,
+      ...oldReceiptObj,
+      challan: req.body.challan ?? oldReceiptObj.challan,
+      personName: req.body.personName ?? oldReceiptObj.personName,
+      items: newItems
+        ? newItems.map(ni => {
+            const old = (oldReceiptObj.items || []).find(oi => oi.sku === ni.sku) || {};
+            return { ...old, received: ni.received ?? old.received ?? 0 };
+          })
+        : oldReceiptObj.items,
     };
-
     grn.markModified("receipts");
-    await grn.save();
 
-    logAudit(req.user, "EDIT_RECEIPT", "GRN", grn.id, { receiptIdx: idx, challan: grn.receipts[idx].challan });
+    if (newItems) {
+      // Recalculate top-level items: initial received + sum of all receipt items per SKU
+      const receiptSumBySKU = {};
+      grn.receipts.forEach(r => {
+        (r.items || []).forEach(ri => {
+          receiptSumBySKU[ri.sku] = (receiptSumBySKU[ri.sku] || 0) + (ri.received || 0);
+        });
+      });
+      grn.items = grn.items.map(item => {
+        const obj = item.toObject ? item.toObject() : { ...item };
+        const totalReceived = receiptSumBySKU[obj.sku] !== undefined ? receiptSumBySKU[obj.sku] : (obj.received || 0);
+        return { ...obj, received: totalReceived, variance: totalReceived - (obj.ordered || 0) };
+      });
+      grn.markModified("items");
+
+      // Recalculate GRN status
+      const hasShortage = grn.items.some(i => i.received < i.ordered);
+      const hasExcess = grn.items.some(i => i.received > i.ordered);
+      grn.status = hasShortage ? "Partial" : hasExcess ? "Over-Received" : "Confirmed";
+
+      // Adjust inventory by delta
+      for (const [sku, delta] of Object.entries(deltaMap)) {
+        if (delta === 0) continue;
+        const inv = await Inventory.findOne({ sku });
+        if (inv) {
+          inv.liveStock = Math.max(0, (inv.liveStock || 0) + delta);
+          await inv.save();
+        }
+      }
+
+      // Update PO status
+      if (grn.poId) {
+        const po = await PurchaseOrder.findOne({ id: grn.poId });
+        if (po) {
+          const newPoStatus = grn.status === "Confirmed" || grn.status === "Over-Received"
+            ? "GRN Fulfilled" : "GRN Variance";
+          if (po.status !== newPoStatus) {
+            po.status = newPoStatus;
+            await po.save();
+            broadcast({ type: "DATA_UPDATED", path: "pos" });
+          }
+        }
+      }
+
+      broadcast({ type: "DATA_UPDATED", path: "inventory" });
+    }
+
+    await grn.save();
+    logAudit(req.user, "EDIT_RECEIPT", "GRN", grn.id, { receiptIdx: idx, challan: grn.receipts[idx].challan, itemsEdited: !!newItems });
     broadcast({ type: "DATA_UPDATED", path: "grn" });
     res.json({ success: true, data: grn });
   } catch (error) {
