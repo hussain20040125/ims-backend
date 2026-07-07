@@ -36,18 +36,26 @@ router.get("/available", authenticate, async (req, res) => {
 router.get("/:gatePassNo", authenticate, async (req, res) => {
   try {
     const gp = req.params.gatePassNo;
-    const OUTWARD_TYPES = ["Transfer Outward", "Public Transfer Outward"];
+    const OUTWARD_TYPES = ["Transfer Outward", "Public Transfer Outward", "Transfer"];
     const [txResult, dbResult] = await Promise.all([
       Transaction.findOne({ gatePassNo: gp, type: { $in: OUTWARD_TYPES } }).lean(),
       Outward.findOne({ gatePassNo: gp, type: { $in: OUTWARD_TYPES } }).lean()
     ]);
-    const result = txResult || dbResult;
+    let result = txResult || dbResult;
+    if (!result) {
+      // Fallback: search by gatePassNo without type restriction
+      const [txFallback, dbFallback] = await Promise.all([
+        Transaction.findOne({ gatePassNo: gp }).lean(),
+        Outward.findOne({ gatePassNo: gp }).lean()
+      ]);
+      result = txFallback || dbFallback;
+    }
     if (!result) {
       return res.status(404).json({ success: false, message: `Gate pass ${gp} not found` });
     }
     res.json({ success: true, data: result });
   } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
