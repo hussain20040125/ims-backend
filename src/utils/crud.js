@@ -27,7 +27,7 @@ const createCrudRoutes = /* @__PURE__ */ __name((router, model, resourceName, id
   router.get("/", authenticate, async (req, res) => {
     try {
       const page = parseInt(req.query.page) || 1;
-      const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+      const limit = Math.min(parseInt(req.query.limit) || 100, 5000);
       const skip = (page - 1) * limit;
       const search = req.query.search;
       const filterStr = req.query.filter;

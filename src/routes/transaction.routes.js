@@ -973,13 +973,17 @@ router.delete("/transactions/:id", authenticate, async (req, res) => {
 router.get("/gate-passes/available", authenticate, async (req, res) => {
   try {
     const INVALID_GP = ["", "NA", "N/A", "na", "n/a", "null", "undefined"];
-    const OUTWARD_TYPES = ["Transfer Outward", "Public Transfer Outward"];
-    const INWARD_TYPES_TF = ["Transfer Inward", "Public Transfer Inward"];
-    const [txOutwards, dbOutwards, txInwards, dbInwards] = await Promise.all([
-      Transaction.find({ type: { $in: OUTWARD_TYPES }, gatePassNo: { $exists: true, $nin: INVALID_GP } }).lean(),
-      Outward.find({ type: { $in: OUTWARD_TYPES }, gatePassNo: { $exists: true, $nin: INVALID_GP } }).lean(),
-      Transaction.find({ type: { $in: INWARD_TYPES_TF }, gatePassNo: { $exists: true, $nin: INVALID_GP } }).lean(),
-      Inward.find({ type: { $in: INWARD_TYPES_TF }, gatePassNo: { $exists: true, $nin: INVALID_GP } }).lean()
+    const OUTWARD_TYPES = ["Transfer Outward", "Public Transfer Outward", "Transfer"];
+    const INWARD_TYPES_TF = ["Transfer Inward", "Public Transfer Inward", "Transfer"];
+    const GP_FILTER = { gatePassNo: { $exists: true, $nin: INVALID_GP } };
+    const [txOutwards, dbOutwards, txInwards, dbInwards, allInwardsWithGP] = await Promise.all([
+      Transaction.find({ type: { $in: OUTWARD_TYPES }, ...GP_FILTER }).lean(),
+      Outward.find({ type: { $in: OUTWARD_TYPES }, ...GP_FILTER }).lean(),
+      Transaction.find({ type: { $in: INWARD_TYPES_TF }, ...GP_FILTER }).lean(),
+      // Inward collection is dedicated — exclude ANY doc with a gatePassNo regardless of type
+      Inward.find(GP_FILTER).lean(),
+      // Also catch Transfer Inwards stored in Transaction with any type variant
+      Transaction.find({ ...GP_FILTER, type: { $regex: /inward/i } }).lean()
     ]);
     const seenOutward = new Set();
     const allOutwards = [...txOutwards, ...dbOutwards].filter((o) => {
@@ -987,7 +991,11 @@ router.get("/gate-passes/available", authenticate, async (req, res) => {
       seenOutward.add(o.gatePassNo);
       return true;
     });
-    const receivedGPs = new Set([...txInwards, ...dbInwards].map((i) => i.gatePassNo).filter(Boolean));
+    const receivedGPs = new Set(
+      [...txInwards, ...dbInwards, ...allInwardsWithGP]
+        .map((i) => i.gatePassNo)
+        .filter(Boolean)
+    );
     const available = allOutwards.filter((o) => !receivedGPs.has(o.gatePassNo));
     res.json({ success: true, data: available });
   } catch (error) {
