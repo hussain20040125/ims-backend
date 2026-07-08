@@ -127,24 +127,34 @@ async function getOrInitSettings() {
   if (!settings) return Settings.create({});
   let dirty = false;
   if (!settings.gstRates?.length) { settings.gstRates = DEFAULT_GST_RATES; dirty = true; }
-  
-  if (settings.stores && settings.stores.length > 0 && (!settings.sites || settings.sites.length === 0)) {
+
+  // Migrate stores → sites (one-time, only when sites is completely empty)
+  if (settings.stores?.length > 0 && (!settings.sites || settings.sites.length === 0)) {
     settings.sites = settings.stores.map(storeName => ({ siteName: storeName, siteCode: "" }));
+    settings.markModified("sites");
     dirty = true;
   }
 
-  // Auto-discover site names from inventory locationStock when sites is still empty
-  if (!settings.sites || settings.sites.length === 0) {
-    const allInv = await Inventory.find({}, { locationStock: 1, "sites.siteName": 1 }).lean();
-    const discovered = new Set();
-    for (const item of allInv) {
-      (item.sites || []).forEach(s => s.siteName && discovered.add(s.siteName));
-      Object.keys(item.locationStock || {}).forEach(k => k && discovered.add(k));
+  // Always merge inventory-discovered sites (adds new ones not already in settings.sites)
+  const allInv = await Inventory.find({}, { locationStock: 1, "sites.siteName": 1 }).lean();
+  const discovered = new Set();
+  for (const item of allInv) {
+    (item.sites || []).forEach(s => s.siteName && discovered.add(s.siteName));
+    const locStock = item.locationStock;
+    if (locStock) {
+      const keys = locStock instanceof Map ? [...locStock.keys()] : Object.keys(locStock);
+      keys.forEach(k => k && discovered.add(k));
     }
-    if (discovered.size > 0) {
-      settings.sites = [...discovered].sort().map(n => ({ siteName: n, siteCode: "" }));
-      dirty = true;
-    }
+  }
+  const existingNames = new Set((settings.sites || []).map(s => s.siteName));
+  const newSites = [...discovered].filter(n => !existingNames.has(n)).sort();
+  if (newSites.length > 0) {
+    settings.sites = [
+      ...(settings.sites || []),
+      ...newSites.map(n => ({ siteName: n, siteCode: "" }))
+    ];
+    settings.markModified("sites");
+    dirty = true;
   }
 
   if (dirty) await settings.save();
