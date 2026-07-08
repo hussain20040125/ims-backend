@@ -104,6 +104,7 @@ router.post("/", authenticate, async (req, res) => {
       type: "GRN",
       grnRef: grnData.id,
       project: grnData.project,
+      store: grnData.store || "",
       materialPhotoUrl: grnData.materialImageUrl,
       challanPhotoUrl: grnData.challanImageUrl,
       items: grnData.items.map((item) => ({
@@ -123,18 +124,19 @@ router.post("/", authenticate, async (req, res) => {
         invItem.liveStock = (invItem.liveStock || 0) + qty;
         invItem.lastProject = grnData.project;
         if (grnData.store) {
-          // Read current site stock from locationStock or sites[] fallback
+          if (!invItem.locationStock) invItem.locationStock = new Map();
+          if (!invItem.sites) invItem.sites = [];
           let curr = 0;
-          if (invItem.locationStock?.has(grnData.store)) {
+          if (invItem.locationStock.has(grnData.store)) {
             curr = Number(invItem.locationStock.get(grnData.store));
           } else {
-            const se = (invItem.sites || []).find(s => s.siteName === grnData.store);
+            const se = invItem.sites.find(s => s.siteName === grnData.store);
             if (se) curr = Number(se.liveStock || 0);
           }
           const newQty = curr + qty;
           invItem.locationStock.set(grnData.store, newQty);
           invItem.markModified("locationStock");
-          const siteEntry = (invItem.sites || []).find(s => s.siteName === grnData.store);
+          const siteEntry = invItem.sites.find(s => s.siteName === grnData.store);
           if (siteEntry) { siteEntry.liveStock = newQty; } else { invItem.sites.push({ siteName: grnData.store, siteCode: "", openingStock: 0, liveStock: newQty }); }
           invItem.markModified("sites");
         }
@@ -166,6 +168,7 @@ router.post("/", authenticate, async (req, res) => {
       type: "Inward",
       date: grnData.date,
       project: grnData.project,
+      store: grnData.store || "",
       destinationProject: grnData.destinationProject,
       gatePassNo: grnData.gatePassNo,
       personName: grnData.personName,
@@ -173,6 +176,8 @@ router.post("/", authenticate, async (req, res) => {
       personPhotos: grnData.personPhotos,
       vendor: grnData.supplier || grnData.vendor,
       supplier: grnData.supplier || grnData.vendor,
+      challanNo: grnData.challan,
+      mrNo: grnData.mrNo,
       remarks: `From GRN: ${grnData.id}`,
       sku: firstItem?.sku || "",
       itemName: firstItem?.itemName || "",
@@ -292,18 +297,43 @@ router.put("/:id", authenticate, async (req, res) => {
       };
     });
     grnData.items = sanitizedItems;
+    const store = grnData.store || oldGRN.store;
     for (const item of oldGRN.items) {
       const inv = await Inventory.findOne({ sku: item.sku });
       if (inv) {
-        inv.liveStock = Math.max(0, (inv.liveStock || 0) - (item.received || 0));
+        if (!inv.locationStock) inv.locationStock = new Map();
+        if (!inv.sites) inv.sites = [];
+        const qty = item.received || 0;
+        inv.liveStock = Math.max(0, (inv.liveStock || 0) - qty);
+        if (store) {
+          const curr = inv.locationStock.has(store) ? Number(inv.locationStock.get(store)) : (inv.sites.find(s => s.siteName === store)?.liveStock || 0);
+          const newQty = Math.max(0, curr - qty);
+          inv.locationStock.set(store, newQty);
+          inv.markModified("locationStock");
+          const se = inv.sites.find(s => s.siteName === store);
+          if (se) { se.liveStock = newQty; } else { inv.sites.push({ siteName: store, siteCode: "", openingStock: 0, liveStock: newQty }); }
+          inv.markModified("sites");
+        }
         await inv.save({});
       }
     }
     for (const item of sanitizedItems) {
       const inv = await Inventory.findOne({ sku: item.sku });
       if (inv) {
-        inv.liveStock = (inv.liveStock || 0) + (item.received || 0);
+        if (!inv.locationStock) inv.locationStock = new Map();
+        if (!inv.sites) inv.sites = [];
+        const qty = item.received || 0;
+        inv.liveStock = (inv.liveStock || 0) + qty;
         inv.lastProject = grnData.project || oldGRN.project;
+        if (store) {
+          const curr = inv.locationStock.has(store) ? Number(inv.locationStock.get(store)) : (inv.sites.find(s => s.siteName === store)?.liveStock || 0);
+          const newQty = curr + qty;
+          inv.locationStock.set(store, newQty);
+          inv.markModified("locationStock");
+          const se = inv.sites.find(s => s.siteName === store);
+          if (se) { se.liveStock = newQty; } else { inv.sites.push({ siteName: store, siteCode: "", openingStock: 0, liveStock: newQty }); }
+          inv.markModified("sites");
+        }
         await inv.save({});
       }
     }
@@ -433,13 +463,13 @@ router.post("/:id/receipt", authenticate, async (req, res) => {
         inv.availableQty = (inv.availableQty || 0) + qty;
         inv.liveStock = (inv.liveStock || 0) + qty;
         if (store) {
-          let curr = 0;
-          if (inv.locationStock?.has(store)) { curr = Number(inv.locationStock.get(store)); }
-          else { const se = (inv.sites || []).find(s => s.siteName === store); if (se) curr = Number(se.liveStock || 0); }
+          if (!inv.locationStock) inv.locationStock = new Map();
+          if (!inv.sites) inv.sites = [];
+          const curr = inv.locationStock.has(store) ? Number(inv.locationStock.get(store)) : (inv.sites.find(s => s.siteName === store)?.liveStock || 0);
           const newQty = curr + qty;
           inv.locationStock.set(store, newQty);
           inv.markModified("locationStock");
-          const se = (inv.sites || []).find(s => s.siteName === store);
+          const se = inv.sites.find(s => s.siteName === store);
           if (se) { se.liveStock = newQty; } else { inv.sites.push({ siteName: store, siteCode: "", openingStock: 0, liveStock: newQty }); }
           inv.markModified("sites");
         }
@@ -523,11 +553,23 @@ router.put("/:id/receipt/:idx", authenticate, async (req, res) => {
       grn.status = hasShortage ? "Partial" : hasExcess ? "Over-Received" : "Confirmed";
 
       // Adjust inventory by delta
+      const receiptStore = grn.store;
       for (const [sku, delta] of Object.entries(deltaMap)) {
         if (delta === 0) continue;
         const inv = await Inventory.findOne({ sku });
         if (inv) {
+          if (!inv.locationStock) inv.locationStock = new Map();
+          if (!inv.sites) inv.sites = [];
           inv.liveStock = Math.max(0, (inv.liveStock || 0) + delta);
+          if (receiptStore) {
+            const curr = inv.locationStock.has(receiptStore) ? Number(inv.locationStock.get(receiptStore)) : (inv.sites.find(s => s.siteName === receiptStore)?.liveStock || 0);
+            const newQty = Math.max(0, curr + delta);
+            inv.locationStock.set(receiptStore, newQty);
+            inv.markModified("locationStock");
+            const se = inv.sites.find(s => s.siteName === receiptStore);
+            if (se) { se.liveStock = newQty; } else { inv.sites.push({ siteName: receiptStore, siteCode: "", openingStock: 0, liveStock: newQty }); }
+            inv.markModified("sites");
+          }
           await inv.save();
         }
       }

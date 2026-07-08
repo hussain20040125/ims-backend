@@ -26,9 +26,11 @@ __name(getSiteStock, "getSiteStock");
 
 // Update both locationStock and sites[] for the given site
 function applyStoreDelta(inv, siteName, newQty) {
+  if (!inv.locationStock) inv.locationStock = new Map();
+  if (!inv.sites) inv.sites = [];
   inv.locationStock.set(siteName, newQty);
   inv.markModified("locationStock");
-  const siteEntry = (inv.sites || []).find(s => s.siteName === siteName);
+  const siteEntry = inv.sites.find(s => s.siteName === siteName);
   if (siteEntry) {
     siteEntry.liveStock = newQty;
   } else {
