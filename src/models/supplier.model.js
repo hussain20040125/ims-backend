@@ -37,7 +37,7 @@ const SupplierSchema = new Schema({
 }, { timestamps: true });
 
 // Keep all alias fields in sync with their canonical counterparts on every save
-SupplierSchema.pre("save", function (next) {
+SupplierSchema.pre("save", async function () {
   if (this.isModified("companyName") || !this.name) this.name = this.companyName;
   if (this.isModified("companyName") || !this.supplierName) this.supplierName = this.companyName;
   if (this.isModified("ownerName")   || !this.contact)  this.contact  = this.ownerName;
@@ -45,7 +45,6 @@ SupplierSchema.pre("save", function (next) {
   if (this.isModified("dealingProducts") || !this.category) this.category = this.dealingProducts;
   if (this.isModified("gstNumber"))   this.gst       = this.gstNumber || this.gst;
   if (this.isModified("accountNumber") || !this.accountNo) this.accountNo = this.accountNumber;
-  next();
 });
 
 SupplierSchema.index({ name: 1 });
