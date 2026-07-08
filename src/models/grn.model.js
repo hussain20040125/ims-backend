@@ -33,6 +33,7 @@ const GRNSchema = new Schema({
   id:                 { type: String, required: true, unique: true },
   poId:               String,
   project:            String,
+  store:              String,
   destinationProject: String,
   supplier:           String,
   date:               String,
