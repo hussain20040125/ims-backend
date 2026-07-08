@@ -120,10 +120,20 @@ router.get("/stats", authenticate, async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 });
+const DEFAULT_GST_RATES = ["0%", "5%", "12%", "18%", "28%"];
+
+async function getOrInitSettings() {
+  let settings = await Settings.findOne();
+  if (!settings) return Settings.create({});
+  let dirty = false;
+  if (!settings.gstRates?.length) { settings.gstRates = DEFAULT_GST_RATES; dirty = true; }
+  if (dirty) await settings.save();
+  return settings;
+}
+
 router.get("/public-settings", async (req, res) => {
   try {
-    let settings = await Settings.findOne();
-    if (!settings) settings = await Settings.create({});
+    const settings = await getOrInitSettings();
     res.json({ success: true, data: settings });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -131,8 +141,7 @@ router.get("/public-settings", async (req, res) => {
 });
 router.get("/settings", authenticate, async (req, res) => {
   try {
-    let settings = await Settings.findOne();
-    if (!settings) settings = await Settings.create({});
+    const settings = await getOrInitSettings();
     res.json({ success: true, data: settings });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

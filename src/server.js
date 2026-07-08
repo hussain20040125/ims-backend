@@ -39,6 +39,7 @@ import gatePassRoutes from "./routes/gate-passes.routes.js";
 import publicRoutes from "./routes/public.routes.js";
 import uploadRoutes from "./routes/upload.routes.js";
 import auditRoutes from "./routes/audit.routes.js";
+import gstRateRoutes from "./routes/gstRate.routes.js";
 import { encryptionMiddleware } from "./middleware/encrypt.middleware.js";
 const IS_PROD = process.env.NODE_ENV === "production";
 if (IS_PROD) {
@@ -127,6 +128,7 @@ app.use("/api/gate-passes", gatePassRoutes);
 app.use("/api/public", publicRoutes);
 app.use("/api", uploadRoutes);
 app.use("/api/audit-logs", auditRoutes);
+app.use("/api", gstRateRoutes);
 app.post("/api/webhook/n8n", async (req, res) => {
   try {
     const signature = req.headers["x-webhook-secret"];

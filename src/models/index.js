@@ -18,3 +18,4 @@ export { Counter }                from "./counter.model.js";
 export { MaterialRequirement, MRAllocation } from "./material-requirement.model.js";
 export { MaterialPlanRevision }   from "./material-plan-revision.model.js";
 export { Quotation }              from "./quotation.model.js";
+export { GSTRate }                from "./gstRate.model.js";

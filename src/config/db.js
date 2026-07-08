@@ -4,7 +4,7 @@ import { logger } from "../utils/logger.js";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
-import { User } from "../models/index.js";
+import { User, GSTRate } from "../models/index.js";
 dotenv.config();
 const MONGODB_URI = process.env.MONGODB_URI || "";
 if (!MONGODB_URI) {
@@ -172,6 +172,9 @@ async function connectDB() {
         { $set: { permissions: ["VIEW_DASHBOARD", "MANAGE_USERS", "VIEW_INVENTORY"] } },
         { upsert: true }
       );
+      for (const rate of [0, 5, 12, 18, 28]) {
+        await GSTRate.findOneAndUpdate({ rate }, { rate }, { upsert: true });
+      }
     } catch (seedError) {
       logger.error("Failed to seed demo users:", seedError);
     }

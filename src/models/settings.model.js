@@ -28,7 +28,8 @@ const SettingsSchema = new Schema({
     l2: { type: Boolean, default: false },
     l3: { type: Boolean, default: false },
   },
-  stores: { type: [String], default: [] },
+  stores:    { type: [String], default: [] },
+  gstRates:  { type: [String], default: ["0%", "5%", "12%", "18%", "28%"] },
 }, { timestamps: true });
 
 export const Settings = mongoose.model("Settings", SettingsSchema);
