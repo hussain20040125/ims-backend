@@ -118,6 +118,7 @@ async function connectDB() {
         "VIEW_GRN",
         "CREATE_GRN",
         "EDIT_GRN",
+        "EDIT_GRN_RECEIPT",
         "DELETE_GRN",
         "VIEW_INWARD",
         "CREATE_INWARD",
