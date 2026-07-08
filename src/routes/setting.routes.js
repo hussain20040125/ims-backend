@@ -133,6 +133,20 @@ async function getOrInitSettings() {
     dirty = true;
   }
 
+  // Auto-discover site names from inventory locationStock when sites is still empty
+  if (!settings.sites || settings.sites.length === 0) {
+    const allInv = await Inventory.find({}, { locationStock: 1, "sites.siteName": 1 }).lean();
+    const discovered = new Set();
+    for (const item of allInv) {
+      (item.sites || []).forEach(s => s.siteName && discovered.add(s.siteName));
+      Object.keys(item.locationStock || {}).forEach(k => k && discovered.add(k));
+    }
+    if (discovered.size > 0) {
+      settings.sites = [...discovered].sort().map(n => ({ siteName: n, siteCode: "" }));
+      dirty = true;
+    }
+  }
+
   if (dirty) await settings.save();
   return settings;
 }

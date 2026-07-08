@@ -28,17 +28,20 @@ async function updateStock(type, sku, itemName, qty, unit, category, session, st
           const curr = hasLocStock ? Number(inv.locationStock.get(store) || 0) : 0;
           inv.locationStock.set(store, curr + qty);
           inv.markModified("locationStock");
+          const siteEntry = (inv.sites || []).find(s => s.siteName === store);
+          if (siteEntry) { siteEntry.liveStock = (siteEntry.liveStock || 0) + qty; inv.markModified("sites"); }
         }
       } else {
         inv.totalQty = (inv.totalQty || 0) - qty;
         inv.availableQty = (inv.availableQty || 0) - qty;
         if (store) {
-          // If no locationStock yet, assume all existing stock was at this store
           const curr = hasLocStock
             ? Number(inv.locationStock.get(store) || 0)
-            : (inv.availableQty + qty); // inv.availableQty already decremented above, add back qty = original
+            : (inv.availableQty + qty);
           inv.locationStock.set(store, Math.max(0, curr - qty));
           inv.markModified("locationStock");
+          const siteEntry = (inv.sites || []).find(s => s.siteName === store);
+          if (siteEntry) { siteEntry.liveStock = Math.max(0, (siteEntry.liveStock || 0) - qty); inv.markModified("sites"); }
         }
       }
       inv.liveStock = (inv.availableQty || 0) + (inv.allocatedQty || 0);
