@@ -9,6 +9,35 @@ import { broadcast } from "../utils/broadcaster.js";
 import { createCrudRoutes } from "../utils/crud.js";
 import { logAudit } from "../utils/audit.js";
 const router = Router();
+
+// Get site-specific stock: checks locationStock Map first, then falls back to sites[].liveStock
+function getSiteStock(inv, siteName) {
+  if (siteName && inv.locationStock) {
+    const fromMap = inv.locationStock.get(siteName);
+    if (fromMap !== undefined) return Number(fromMap);
+  }
+  if (siteName) {
+    const siteEntry = (inv.sites || []).find(s => s.siteName === siteName);
+    if (siteEntry) return Number(siteEntry.liveStock || 0);
+  }
+  return 0;
+}
+__name(getSiteStock, "getSiteStock");
+
+// Update both locationStock and sites[] for the given site
+function applyStoreDelta(inv, siteName, newQty) {
+  inv.locationStock.set(siteName, newQty);
+  inv.markModified("locationStock");
+  const siteEntry = (inv.sites || []).find(s => s.siteName === siteName);
+  if (siteEntry) {
+    siteEntry.liveStock = newQty;
+  } else {
+    inv.sites.push({ siteName, siteCode: "", openingStock: 0, liveStock: newQty });
+  }
+  inv.markModified("sites");
+}
+__name(applyStoreDelta, "applyStoreDelta");
+
 async function updateStock(type, sku, itemName, qty, unit, category, session, store) {
   let isPositive = false;
   let isNegative = false;
@@ -20,38 +49,25 @@ async function updateStock(type, sku, itemName, qty, unit, category, session, st
   if (isPositive || isNegative) {
     const inv = await Inventory.findOne({ sku });
     if (inv) {
-      const hasLocStock = inv.locationStock && inv.locationStock.size > 0;
       if (isPositive) {
         inv.totalQty = (inv.totalQty || 0) + qty;
         inv.availableQty = (inv.availableQty || 0) + qty;
         if (store) {
-          const curr = hasLocStock ? Number(inv.locationStock.get(store) || 0) : 0;
-          inv.locationStock.set(store, curr + qty);
-          inv.markModified("locationStock");
-          const siteEntry = (inv.sites || []).find(s => s.siteName === store);
-          if (siteEntry) { siteEntry.liveStock = (siteEntry.liveStock || 0) + qty; inv.markModified("sites"); }
+          applyStoreDelta(inv, store, getSiteStock(inv, store) + qty);
         }
       } else {
         inv.totalQty = (inv.totalQty || 0) - qty;
         inv.availableQty = (inv.availableQty || 0) - qty;
         if (store) {
-          const curr = hasLocStock
-            ? Number(inv.locationStock.get(store) || 0)
-            : (inv.availableQty + qty);
-          inv.locationStock.set(store, Math.max(0, curr - qty));
-          inv.markModified("locationStock");
-          const siteEntry = (inv.sites || []).find(s => s.siteName === store);
-          if (siteEntry) { siteEntry.liveStock = Math.max(0, (siteEntry.liveStock || 0) - qty); inv.markModified("sites"); }
+          applyStoreDelta(inv, store, Math.max(0, getSiteStock(inv, store) - qty));
         }
       }
       inv.liveStock = (inv.availableQty || 0) + (inv.allocatedQty || 0);
       await inv.save(session ? {} : void 0);
     } else if (isPositive) {
-      const locStock = store ? { [store]: qty } : {};
       await Inventory.create(
         [{
-          sku,
-          itemName,
+          sku, itemName,
           category: category || "General",
           subCategory: "General",
           unit: unit || "NOS",
@@ -62,7 +78,8 @@ async function updateStock(type, sku, itemName, qty, unit, category, session, st
           issuedQty: 0,
           liveStock: qty,
           condition: "New",
-          locationStock: locStock
+          locationStock: store ? { [store]: qty } : {},
+          sites: store ? [{ siteName: store, siteCode: "", openingStock: qty, liveStock: qty }] : [],
         }],
         session ? {} : void 0
       );
@@ -241,18 +258,13 @@ router.post("/outward", authenticate, async (req, res) => {
         inv.allocatedQty = (inv.allocatedQty || 0) - fromAllocation;
         inv.issuedQty = (inv.issuedQty || 0) + item.qty;
         if (body.store) {
-          const curr = Number(inv.locationStock?.get(body.store) || 0);
-          inv.locationStock.set(body.store, Math.max(0, curr - item.qty));
-          inv.markModified("locationStock");
+          applyStoreDelta(inv, body.store, Math.max(0, getSiteStock(inv, body.store) - item.qty));
         }
         await inv.save({});
       } else {
         const inv = await Inventory.findOne({ sku: item.sku });
         if (!inv) throw new Error(`Inventory item not found for SKU ${item.sku}`);
-        const hasLocStock = inv.locationStock && inv.locationStock.size > 0;
-        const storeAvail = body.store
-          ? (hasLocStock ? Number(inv.locationStock.get(body.store) || 0) : inv.availableQty)
-          : inv.availableQty;
+        const storeAvail = body.store ? getSiteStock(inv, body.store) : inv.availableQty;
         if (storeAvail < item.qty) {
           const where = body.store ? ` at ${body.store}` : "";
           throw new Error(`Insufficient stock${where} for ${item.itemName}. Available: ${storeAvail}, Requested: ${item.qty}`);
