@@ -29,6 +29,7 @@ const SettingsSchema = new Schema({
     l3: { type: Boolean, default: false },
   },
   stores:    { type: [String], default: [] },
+  sites:     [{ siteName: String, siteCode: String }],
   gstRates:  { type: [String], default: ["0%", "5%", "12%", "18%", "28%"] },
 }, { timestamps: true });
 

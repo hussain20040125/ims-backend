@@ -1,11 +1,21 @@
 import mongoose, { Schema } from "mongoose";
 
+const SiteSchema = new Schema({
+  siteName: String,
+  siteCode: String,
+  openingStock: { type: Number, default: 0 },
+  liveStock: { type: Number, default: 0 }
+}, { _id: false });
+
 const InventorySchema = new Schema({
   sku:          { type: String, required: true, unique: true },
   itemName:     { type: String, required: true },
   category:     { type: String, required: true },
   subCategory:  { type: String, required: true },
   unit:         { type: String, required: true },
+  sites:        [SiteSchema],
+  totalStock:   { type: Number, default: 0 },
+  maxLevel:     { type: Number, default: 0 },
   openingStock: { type: Number, default: 0 },
   totalQty:     { type: Number, default: 0 },      // total_qty = available + allocated + issued
   availableQty: { type: Number, default: 0 },      // Layer 1: Free stock

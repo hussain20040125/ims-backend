@@ -127,6 +127,12 @@ async function getOrInitSettings() {
   if (!settings) return Settings.create({});
   let dirty = false;
   if (!settings.gstRates?.length) { settings.gstRates = DEFAULT_GST_RATES; dirty = true; }
+  
+  if (settings.stores && settings.stores.length > 0 && (!settings.sites || settings.sites.length === 0)) {
+    settings.sites = settings.stores.map(storeName => ({ siteName: storeName, siteCode: "" }));
+    dirty = true;
+  }
+
   if (dirty) await settings.save();
   return settings;
 }
