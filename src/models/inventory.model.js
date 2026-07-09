@@ -22,16 +22,25 @@ const InventorySchema = new Schema({
   allocatedQty: { type: Number, default: 0 },      // Layer 2: Reserved/Locked for MR
   issuedQty:    { type: Number, default: 0 },      // Layer 3: Physically moved out
   liveStock:    { type: Number, default: 0 },      // Legacy/Compatibility
-  condition:     { type: String, enum: ["New","Good","Needs Repair","Damaged","NEW","GOOD","NEEDS REPAIR","DAMAGED"], default: "New" },
+  condition:     { type: String, enum: ["New","Good","Old","Needs Repair","Damaged","NEW","GOOD","OLD","NEEDS REPAIR","DAMAGED"], default: "New" },
   sourceSite:    String,
   lastProject:   String,
   locationStock: { type: Map, of: Number, default: {} },
 }, { timestamps: true });
 
 InventorySchema.pre("save", async function () {
+  // When site-level stock exists, liveStock must equal the sum of all locationStock values.
+  // This self-corrects any global/site divergence that accumulated from legacy operations.
+  if (this.locationStock && this.locationStock.size > 0) {
+    const siteTotal = [...this.locationStock.values()].reduce(
+      (sum, v) => sum + Math.max(0, Number(v) || 0), 0
+    );
+    this.liveStock = siteTotal;
+  }
   if (this.liveStock !== undefined) {
     this.availableQty = Math.max(0, (this.liveStock || 0) - (this.allocatedQty || 0));
     this.totalQty     = (this.liveStock || 0) + (this.issuedQty || 0);
+    this.totalStock   = (this.liveStock || 0) + (this.issuedQty || 0);
   }
 });
 

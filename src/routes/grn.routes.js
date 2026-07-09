@@ -3,11 +3,26 @@ var __name = (target, value) => __defProp(target, "name", { value, configurable:
 import { logger } from "../utils/logger.js";
 import { Router } from "express";
 import { GRN, Inward, Transaction, Inventory, PurchaseOrder } from "../models/index.js";
-import { authenticate } from "../middleware/auth.middleware.js";
+import { authenticate, serverHasPermission } from "../middleware/auth.middleware.js";
 import { getRolesWithPermission, createNotification } from "../utils/notification.js";
 import { triggerN8nWebhook, checkAndFireLowStockWebhook } from "../utils/webhook.js";
 import { broadcast } from "../utils/broadcaster.js";
 import { logAudit } from "../utils/audit.js";
+
+// Sanitize filter to prevent MongoDB operator injection — allow only safe value types
+function sanitizeFilter(raw) {
+  const safe = {};
+  for (const [key, val] of Object.entries(raw)) {
+    if (key.startsWith("$")) continue; // block top-level operators like $where
+    if (val !== null && typeof val === "object" && !Array.isArray(val)) {
+      const opKeys = Object.keys(val);
+      const unsafeOps = opKeys.filter(k => k.startsWith("$") && !["$in", "$nin", "$exists", "$regex", "$options"].includes(k));
+      if (unsafeOps.length > 0) continue;
+    }
+    safe[key] = val;
+  }
+  return safe;
+}
 const router = Router();
 router.get("/", authenticate, async (req, res) => {
   try {
@@ -51,7 +66,7 @@ router.get("/", authenticate, async (req, res) => {
     }
     if (filterStr) {
       const { startDate: _, endDate: __, ...restFilter } = parsedFilter;
-      query = { ...query, ...restFilter };
+      query = { ...query, ...sanitizeFilter(restFilter) };
     }
     const [items, total] = await Promise.all([
       GRN.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
@@ -68,13 +83,11 @@ router.get("/", authenticate, async (req, res) => {
   }
 });
 router.post("/", authenticate, async (req, res) => {
-  const session = { startTransaction: /* @__PURE__ */ __name(() => {
-  }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
-  }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
-  }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession") };
-  session.startTransaction();
+  let createdGrnId = null;
   try {
+    if (!await serverHasPermission(req.user, "CREATE_GRN")) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
     const rawGrnData = req.body;
     const grnData = {
       ...rawGrnData,
@@ -86,15 +99,24 @@ router.post("/", authenticate, async (req, res) => {
     };
     if (!grnData.id) {
       const year = new Date().getFullYear();
-      const allGRNs = await GRN.find({}, { id: 1 }).lean();
-      const maxNum = allGRNs.reduce((max, g) => {
-        const parts = (g.id || "").split("-");
-        const num = parseInt(parts[parts.length - 1] || "0");
-        return isNaN(num) ? max : Math.max(max, num);
-      }, 0);
-      grnData.id = `GRN-${year}-${String(maxNum + 1).padStart(3, "0")}`;
+      // Retry loop to handle race condition on GRN ID generation
+      let attempts = 0;
+      while (!grnData.id && attempts < 10) {
+        const yearGRNs = await GRN.find({ id: { $regex: `^GRN-${year}-` } }, { id: 1 }).lean();
+        const maxNum = yearGRNs.reduce((max, g) => {
+          const parts = (g.id || "").split("-");
+          const num = parseInt(parts[parts.length - 1] || "0");
+          return isNaN(num) ? max : Math.max(max, num);
+        }, 0);
+        const candidateId = `GRN-${year}-${String(maxNum + 1).padStart(3, "0")}`;
+        const exists = await GRN.findOne({ id: candidateId }, { id: 1 }).lean();
+        if (!exists) grnData.id = candidateId;
+        attempts++;
+      }
+      if (!grnData.id) throw new Error("Could not generate unique GRN ID");
     }
     const grn = await GRN.create([grnData]);
+    createdGrnId = grn[0].id;
     const inwardRecord = {
       id: `INW-${grnData.id}`,
       date: grnData.date,
@@ -157,7 +179,7 @@ router.post("/", authenticate, async (req, res) => {
           condition: "New",
           lastProject: grnData.project,
           locationStock: grnData.store ? { [grnData.store]: qty } : {},
-          sites: grnData.store ? [{ siteName: grnData.store, siteCode: "", openingStock: qty, liveStock: qty }] : [],
+          sites: grnData.store ? [{ siteName: grnData.store, siteCode: "", openingStock: 0, liveStock: qty }] : [],
         }]);
       }
     }
@@ -251,7 +273,6 @@ router.post("/", authenticate, async (req, res) => {
         senderId: req.user._id
       });
     }
-    await session.commitTransaction();
     logAudit(req.user, "CREATE", "GRN", grn[0].id, { poId: grnData.poId, supplier: grnData.supplier, project: grnData.project });
     broadcast({ type: "DATA_UPDATED", path: "grn" });
     broadcast({ type: "DATA_UPDATED", path: "inward" });
@@ -270,20 +291,20 @@ router.post("/", authenticate, async (req, res) => {
     await checkAndFireLowStockWebhook(grnData.items.map((i) => i.sku));
     res.json({ success: true, data: grn[0] });
   } catch (error) {
-    await session.abortTransaction();
+    // C1: Compensate partial writes on failure
+    if (createdGrnId) {
+      await GRN.findOneAndDelete({ id: createdGrnId }).catch(() => {});
+      await Inward.deleteMany({ grnRef: createdGrnId }).catch(() => {});
+      await Transaction.deleteMany({ linkId: createdGrnId }).catch(() => {});
+    }
     res.status(400).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
   }
 });
 router.put("/:id", authenticate, async (req, res) => {
-  const session = { startTransaction: /* @__PURE__ */ __name(() => {
-  }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
-  }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
-  }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession") };
-  session.startTransaction();
   try {
+    if (!await serverHasPermission(req.user, "EDIT_GRN")) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
     const rawGrnData = req.body;
     const oldGRN = await GRN.findOne({ id: req.params.id });
     if (!oldGRN) throw new Error("GRN not found");
@@ -297,7 +318,9 @@ router.put("/:id", authenticate, async (req, res) => {
       };
     });
     grnData.items = sanitizedItems;
-    const store = grnData.store || oldGRN.store;
+    // C3: Use oldStore for reversal, newStore for re-apply (prevents double-count when store changes)
+    const oldStore = oldGRN.store;
+    const newStore = grnData.store || oldGRN.store;
     for (const item of oldGRN.items) {
       const inv = await Inventory.findOne({ sku: item.sku });
       if (inv) {
@@ -305,13 +328,13 @@ router.put("/:id", authenticate, async (req, res) => {
         if (!inv.sites) inv.sites = [];
         const qty = item.received || 0;
         inv.liveStock = Math.max(0, (inv.liveStock || 0) - qty);
-        if (store) {
-          const curr = inv.locationStock.has(store) ? Number(inv.locationStock.get(store)) : (inv.sites.find(s => s.siteName === store)?.liveStock || 0);
+        if (oldStore) {
+          const curr = inv.locationStock.has(oldStore) ? Number(inv.locationStock.get(oldStore)) : (inv.sites.find(s => s.siteName === oldStore)?.liveStock || 0);
           const newQty = Math.max(0, curr - qty);
-          inv.locationStock.set(store, newQty);
+          inv.locationStock.set(oldStore, newQty);
           inv.markModified("locationStock");
-          const se = inv.sites.find(s => s.siteName === store);
-          if (se) { se.liveStock = newQty; } else { inv.sites.push({ siteName: store, siteCode: "", openingStock: 0, liveStock: newQty }); }
+          const se = inv.sites.find(s => s.siteName === oldStore);
+          if (se) { se.liveStock = newQty; } else { inv.sites.push({ siteName: oldStore, siteCode: "", openingStock: 0, liveStock: newQty }); }
           inv.markModified("sites");
         }
         await inv.save({});
@@ -325,13 +348,13 @@ router.put("/:id", authenticate, async (req, res) => {
         const qty = item.received || 0;
         inv.liveStock = (inv.liveStock || 0) + qty;
         inv.lastProject = grnData.project || oldGRN.project;
-        if (store) {
-          const curr = inv.locationStock.has(store) ? Number(inv.locationStock.get(store)) : (inv.sites.find(s => s.siteName === store)?.liveStock || 0);
+        if (newStore) {
+          const curr = inv.locationStock.has(newStore) ? Number(inv.locationStock.get(newStore)) : (inv.sites.find(s => s.siteName === newStore)?.liveStock || 0);
           const newQty = curr + qty;
-          inv.locationStock.set(store, newQty);
+          inv.locationStock.set(newStore, newQty);
           inv.markModified("locationStock");
-          const se = inv.sites.find(s => s.siteName === store);
-          if (se) { se.liveStock = newQty; } else { inv.sites.push({ siteName: store, siteCode: "", openingStock: 0, liveStock: newQty }); }
+          const se = inv.sites.find(s => s.siteName === newStore);
+          if (se) { se.liveStock = newQty; } else { inv.sites.push({ siteName: newStore, siteCode: "", openingStock: 0, liveStock: newQty }); }
           inv.markModified("sites");
         }
         await inv.save({});
@@ -395,7 +418,6 @@ router.put("/:id", authenticate, async (req, res) => {
         }
       }
     }
-    await session.commitTransaction();
     broadcast({ type: "DATA_UPDATED", path: "grn" });
     broadcast({ type: "DATA_UPDATED", path: "inward" });
     broadcast({ type: "DATA_UPDATED", path: "inventory" });
@@ -411,10 +433,7 @@ router.put("/:id", authenticate, async (req, res) => {
     await checkAndFireLowStockWebhook(sanitizedItems.map((i) => i.sku));
     res.json({ success: true, data: grn });
   } catch (error) {
-    await session.abortTransaction();
     res.status(400).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
   }
 });
 router.post("/:id/receipt", authenticate, async (req, res) => {
@@ -438,16 +457,15 @@ router.post("/:id/receipt", authenticate, async (req, res) => {
     };
     grn.receipts = grn.receipts || [];
     grn.receipts.push(receipt);
-    // Recalculate cumulative received per SKU from all receipts
-    const receivedBySKU = {};
-    grn.receipts.forEach((r) => {
-      (r.items || []).forEach((item) => {
-        receivedBySKU[item.sku] = (receivedBySKU[item.sku] || 0) + (item.received || 0);
-      });
+    // C2: Accumulate — add only the NEW receipt qty onto existing total (preserves initial received)
+    const newReceiptBySKU = {};
+    (receipt.items || []).forEach((item) => {
+      newReceiptBySKU[item.sku] = (newReceiptBySKU[item.sku] || 0) + (item.received || 0);
     });
     grn.items = grn.items.map((item) => {
       const obj = item.toObject ? item.toObject() : { ...item };
-      const totalReceived = receivedBySKU[item.sku] || obj.received || 0;
+      const addedQty = newReceiptBySKU[obj.sku] || 0;
+      const totalReceived = (obj.received || 0) + addedQty;
       return { ...obj, received: totalReceived, variance: totalReceived - (obj.ordered || 0) };
     });
     const hasShortage = grn.items.some((i) => i.received < i.ordered);
@@ -477,12 +495,26 @@ router.post("/:id/receipt", authenticate, async (req, res) => {
       }
     }
     await grn.save();
-    // Update PO status
+    // H6: Update PO status by aggregating ALL GRNs for this PO (not just current GRN status)
     if (grn.poId) {
       const po = await PurchaseOrder.findOne({ id: grn.poId });
       if (po) {
-        const newPoStatus = grn.status === "Confirmed" || grn.status === "Over-Received"
-          ? "GRN Fulfilled" : "GRN Variance";
+        const allGrns = await GRN.find({ poId: grn.poId });
+        let allFulfilled = true;
+        let anyVariance = false;
+        for (const poItem of po.items) {
+          const totalReceived = allGrns.reduce((sum, g) => {
+            const grnItem = g.items.find((i) => i.sku === poItem.sku);
+            return sum + (grnItem?.received || 0);
+          }, 0);
+          if (totalReceived < (poItem.qty || 0)) {
+            allFulfilled = false;
+            if (totalReceived > 0) anyVariance = true;
+          } else if (totalReceived > (poItem.qty || 0)) {
+            anyVariance = true;
+          }
+        }
+        const newPoStatus = allFulfilled ? "GRN Fulfilled" : anyVariance ? "GRN Variance" : "GRN Pending";
         if (po.status !== newPoStatus) {
           po.status = newPoStatus;
           await po.save();
@@ -533,16 +565,11 @@ router.put("/:id/receipt/:idx", authenticate, async (req, res) => {
     grn.markModified("receipts");
 
     if (newItems) {
-      // Recalculate top-level items: initial received + sum of all receipt items per SKU
-      const receiptSumBySKU = {};
-      grn.receipts.forEach(r => {
-        (r.items || []).forEach(ri => {
-          receiptSumBySKU[ri.sku] = (receiptSumBySKU[ri.sku] || 0) + (ri.received || 0);
-        });
-      });
+      // M9: Use delta to update grn.items[].received — preserves initial received from GRN creation
       grn.items = grn.items.map(item => {
         const obj = item.toObject ? item.toObject() : { ...item };
-        const totalReceived = receiptSumBySKU[obj.sku] !== undefined ? receiptSumBySKU[obj.sku] : (obj.received || 0);
+        const delta = deltaMap[obj.sku] || 0;
+        const totalReceived = Math.max(0, (obj.received || 0) + delta);
         return { ...obj, received: totalReceived, variance: totalReceived - (obj.ordered || 0) };
       });
       grn.markModified("items");
@@ -574,12 +601,26 @@ router.put("/:id/receipt/:idx", authenticate, async (req, res) => {
         }
       }
 
-      // Update PO status
+      // Update PO status by aggregating ALL GRNs for this PO (H8 fix)
       if (grn.poId) {
         const po = await PurchaseOrder.findOne({ id: grn.poId });
         if (po) {
-          const newPoStatus = grn.status === "Confirmed" || grn.status === "Over-Received"
-            ? "GRN Fulfilled" : "GRN Variance";
+          const allGrns = await GRN.find({ poId: grn.poId });
+          let allFulfilled = true;
+          let anyVariance = false;
+          for (const poItem of po.items) {
+            const totalReceived = allGrns.reduce((sum, g) => {
+              const grnItem = g.items.find((i) => i.sku === poItem.sku);
+              return sum + (grnItem?.received || 0);
+            }, 0);
+            if (totalReceived < (poItem.qty || 0)) {
+              allFulfilled = false;
+              if (totalReceived > 0) anyVariance = true;
+            } else if (totalReceived > (poItem.qty || 0)) {
+              anyVariance = true;
+            }
+          }
+          const newPoStatus = allFulfilled ? "GRN Fulfilled" : anyVariance ? "GRN Variance" : "GRN Pending";
           if (po.status !== newPoStatus) {
             po.status = newPoStatus;
             await po.save();
@@ -601,20 +642,31 @@ router.put("/:id/receipt/:idx", authenticate, async (req, res) => {
   }
 });
 router.delete("/:id", authenticate, async (req, res) => {
-  const session = { startTransaction: /* @__PURE__ */ __name(() => {
-  }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
-  }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
-  }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession") };
-  session.startTransaction();
   try {
+    if (!await serverHasPermission(req.user, "DELETE_GRN")) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
     const grn = await GRN.findOne({ id: req.params.id });
     if (!grn) throw new Error("GRN not found");
     const poId = grn.poId;
+    const grnStore = grn.store;
+    // C4: Reverse both liveStock AND locationStock/sites[] when deleting GRN
     for (const item of grn.items) {
       const inv = await Inventory.findOne({ sku: item.sku });
       if (inv) {
-        inv.liveStock = Math.max(0, (inv.liveStock || 0) - (item.received || 0));
+        const qty = item.received || 0;
+        if (!inv.locationStock) inv.locationStock = new Map();
+        if (!inv.sites) inv.sites = [];
+        inv.liveStock = Math.max(0, (inv.liveStock || 0) - qty);
+        if (grnStore) {
+          const curr = inv.locationStock.has(grnStore) ? Number(inv.locationStock.get(grnStore)) : (inv.sites.find(s => s.siteName === grnStore)?.liveStock || 0);
+          const newQty = Math.max(0, curr - qty);
+          inv.locationStock.set(grnStore, newQty);
+          inv.markModified("locationStock");
+          const se = inv.sites.find(s => s.siteName === grnStore);
+          if (se) { se.liveStock = newQty; } else { inv.sites.push({ siteName: grnStore, siteCode: "", openingStock: 0, liveStock: newQty }); }
+          inv.markModified("sites");
+        }
         await inv.save({});
       }
     }
@@ -648,7 +700,6 @@ router.delete("/:id", authenticate, async (req, res) => {
         }
       }
     }
-    await session.commitTransaction();
     broadcast({ type: "DATA_UPDATED", path: "grn" });
     broadcast({ type: "DATA_UPDATED", path: "inward" });
     broadcast({ type: "DATA_UPDATED", path: "inventory" });
@@ -661,10 +712,7 @@ router.delete("/:id", authenticate, async (req, res) => {
     });
     res.json({ success: true });
   } catch (error) {
-    await session.abortTransaction();
     res.status(400).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
   }
 });
 var stdin_default = router;

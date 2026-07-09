@@ -43,7 +43,7 @@ router.get("/available", authenticate, async (req, res) => {
 // Returns a specific Transfer Outward by gate pass number (searches both collections)
 router.get("/:gatePassNo", authenticate, async (req, res) => {
   try {
-    const gp = req.params.gatePassNo;
+    const gp = req.params.gatePassNo.trim();
     const OUTWARD_TYPES = ["Transfer Outward", "Public Transfer Outward", "Transfer"];
     const [txResult, dbResult] = await Promise.all([
       Transaction.findOne({ gatePassNo: gp, type: { $in: OUTWARD_TYPES } }).lean(),

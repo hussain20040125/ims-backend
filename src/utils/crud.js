@@ -2,6 +2,19 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 import { logger } from "./logger.js";
 import { authenticate, serverHasPermission } from "../middleware/auth.middleware.js";
+
+function sanitizeFilter(raw) {
+  const safe = {};
+  for (const [key, val] of Object.entries(raw)) {
+    if (key.startsWith("$")) continue;
+    if (val !== null && typeof val === "object" && !Array.isArray(val)) {
+      const unsafeOps = Object.keys(val).filter(k => k.startsWith("$") && !["$in", "$nin", "$exists", "$regex", "$options"].includes(k));
+      if (unsafeOps.length > 0) continue;
+    }
+    safe[key] = val;
+  }
+  return safe;
+}
 import { getNextSequence } from "./sequence.js";
 import { getRolesWithPermission, createNotification } from "./notification.js";
 import { triggerN8nWebhook } from "./webhook.js";
@@ -72,7 +85,7 @@ const createCrudRoutes = /* @__PURE__ */ __name((router, model, resourceName, id
       }
       if (filterStr) {
         const { startDate: _, endDate: __, ...restFilter } = crudFilter;
-        query = { ...query, ...restFilter };
+        query = { ...query, ...sanitizeFilter(restFilter) };
       }
       const [items, total] = await Promise.all([
         model.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
@@ -123,19 +136,11 @@ const createCrudRoutes = /* @__PURE__ */ __name((router, model, resourceName, id
         senderId: req.user._id
       }).catch(() => {
       });
+      // M1: Single notification for Store Pending MR (was duplicated)
       if (resourceName === "material-requirements" && item.status === "Store Pending") {
         const roles = await getRolesWithPermission("APPROVE_MR_STORE");
         await createNotification({
-          message: `New MR ${item.id} submitted for Store Approval`,
-          severity: "warning",
-          path: "material-requirements",
-          targetRoles: roles
-        });
-      }
-      if (resourceName === "material-requirements" && item.status === "Store Pending") {
-        const roles = await getRolesWithPermission("APPROVE_MR_STORE");
-        await createNotification({
-          message: `New Material Requirement ${item.id} received from ${item.requesterName}. Store approval required.`,
+          message: `New Material Requirement ${item.id} received from ${item.requesterName || req.user.name}. Store approval required.`,
           severity: "warning",
           path: "material-requirements",
           senderId: req.user._id,

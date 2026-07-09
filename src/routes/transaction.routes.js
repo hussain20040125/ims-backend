@@ -1,8 +1,22 @@
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 import { Router } from "express";
+import mongoose from "mongoose";
 import { Inward, Outward, InwardReturn, OutwardReturn, Transaction, Inventory, MRAllocation, MaterialRequirement } from "../models/index.js";
-import { authenticate } from "../middleware/auth.middleware.js";
+import { authenticate, serverHasPermission } from "../middleware/auth.middleware.js";
+
+function sanitizeFilter(raw) {
+  const safe = {};
+  for (const [key, val] of Object.entries(raw)) {
+    if (key.startsWith("$")) continue;
+    if (val !== null && typeof val === "object" && !Array.isArray(val)) {
+      const unsafeOps = Object.keys(val).filter(k => k.startsWith("$") && !["$in", "$nin", "$exists", "$regex", "$options"].includes(k));
+      if (unsafeOps.length > 0) continue;
+    }
+    safe[key] = val;
+  }
+  return safe;
+}
 import { createNotification } from "../utils/notification.js";
 import { triggerN8nWebhook, checkAndFireLowStockWebhook } from "../utils/webhook.js";
 import { broadcast } from "../utils/broadcaster.js";
@@ -40,7 +54,52 @@ function applyStoreDelta(inv, siteName, newQty) {
 }
 __name(applyStoreDelta, "applyStoreDelta");
 
-async function updateStock(type, sku, itemName, qty, unit, category, session, store) {
+// After any Transfer Inward create/edit/delete, recompute and persist status on the linked Transfer Outward
+async function syncTransferOutwardStatus(gatePassNo) {
+  if (!gatePassNo) return;
+  const outward = await Outward.findOne({ gatePassNo, type: { $in: ["Transfer Outward", "Public Transfer Outward"] } });
+  if (!outward) return;
+  const inward = await Inward.findOne({ gatePassNo, type: { $in: ["Transfer Inward", "Public Transfer Inward"] } });
+  if (!inward) {
+    await Outward.findOneAndUpdate({ id: outward.id }, { transferStatus: "Pending", transferVariance: 0 });
+    return;
+  }
+  const outwardQty = (outward.items || []).reduce((s, i) => s + (Number(i.qty) || 0), 0);
+  const inwardQty  = (inward.items  || []).reduce((s, i) => s + (Number(i.qty) || 0), 0);
+  const variance   = outwardQty - inwardQty;
+  const status     = variance <= 0 ? "Fulfilled" : "Partially Complete";
+  await Outward.findOneAndUpdate({ id: outward.id }, { transferStatus: status, transferVariance: variance });
+}
+__name(syncTransferOutwardStatus, "syncTransferOutwardStatus");
+
+// Backfill: recompute transferStatus + transferVariance for all Transfer Outward records.
+// Runs once at startup so existing records get correct status without any manual step.
+async function syncAllTransferOutwardStatuses() {
+  try {
+    const outwards = await Outward.find({ type: { $in: ["Transfer Outward", "Public Transfer Outward"] }, gatePassNo: { $exists: true, $ne: "" } });
+    for (const outward of outwards) {
+      const inward = await Inward.findOne({ gatePassNo: outward.gatePassNo, type: { $in: ["Transfer Inward", "Public Transfer Inward"] } });
+      let status = "Pending", variance = 0;
+      if (inward) {
+        const outwardQty = (outward.items || []).reduce((s, i) => s + (Number(i.qty) || 0), 0);
+        const inwardQty  = (inward.items  || []).reduce((s, i) => s + (Number(i.qty) || 0), 0);
+        variance = outwardQty - inwardQty;
+        status   = variance <= 0 ? "Fulfilled" : "Partially Complete";
+      }
+      await Outward.findOneAndUpdate({ id: outward.id }, { transferStatus: status, transferVariance: variance });
+    }
+  } catch (err) {
+    console.error("[syncAllTransferOutwardStatuses] error:", err.message);
+  }
+}
+__name(syncAllTransferOutwardStatuses, "syncAllTransferOutwardStatuses");
+
+// Run the backfill once after MongoDB connects
+mongoose.connection.once("open", () => {
+  syncAllTransferOutwardStatuses();
+});
+
+async function updateStock(type, sku, itemName, qty, unit, category, _session, store) {
   let isPositive = false;
   let isNegative = false;
   if (["Inward", "Outward Return", "Public Inward", "Public Outward Return", "Public Transfer Inward", "Transfer Inward", "GRN"].includes(type)) {
@@ -52,39 +111,36 @@ async function updateStock(type, sku, itemName, qty, unit, category, session, st
     const inv = await Inventory.findOne({ sku });
     if (inv) {
       if (isPositive) {
-        inv.totalQty = (inv.totalQty || 0) + qty;
-        inv.availableQty = (inv.availableQty || 0) + qty;
+        inv.totalQty = Math.max(0, (inv.totalQty || 0) + qty);
+        inv.availableQty = Math.max(0, (inv.availableQty || 0) + qty);
         if (store) {
-          applyStoreDelta(inv, store, getSiteStock(inv, store) + qty);
+          applyStoreDelta(inv, store, Math.max(0, getSiteStock(inv, store) + qty));
         }
       } else {
-        inv.totalQty = (inv.totalQty || 0) - qty;
-        inv.availableQty = (inv.availableQty || 0) - qty;
+        inv.totalQty = Math.max(0, (inv.totalQty || 0) - qty);
+        inv.availableQty = Math.max(0, (inv.availableQty || 0) - qty);
         if (store) {
           applyStoreDelta(inv, store, Math.max(0, getSiteStock(inv, store) - qty));
         }
       }
-      inv.liveStock = (inv.availableQty || 0) + (inv.allocatedQty || 0);
-      await inv.save(session ? {} : void 0);
+      inv.liveStock = Math.max(0, (inv.availableQty || 0) + (inv.allocatedQty || 0));
+      await inv.save();
     } else if (isPositive) {
-      await Inventory.create(
-        [{
-          sku, itemName,
-          category: category || "General",
-          subCategory: "General",
-          unit: unit || "NOS",
-          openingStock: 0,
-          totalQty: qty,
-          availableQty: qty,
-          allocatedQty: 0,
-          issuedQty: 0,
-          liveStock: qty,
-          condition: "New",
-          locationStock: store ? { [store]: qty } : {},
-          sites: store ? [{ siteName: store, siteCode: "", openingStock: qty, liveStock: qty }] : [],
-        }],
-        session ? {} : void 0
-      );
+      await Inventory.create([{
+        sku, itemName,
+        category: category || "General",
+        subCategory: "General",
+        unit: unit || "NOS",
+        openingStock: 0,
+        totalQty: qty,
+        availableQty: qty,
+        allocatedQty: 0,
+        issuedQty: 0,
+        liveStock: qty,
+        condition: "New",
+        locationStock: store ? { [store]: qty } : {},
+        sites: store ? [{ siteName: store, siteCode: "", openingStock: 0, liveStock: qty }] : [],
+      }]);
     }
   }
 }
@@ -93,6 +149,8 @@ router.post("/inward", authenticate, async (req, res) => {
   try {
     const body = req.body;
     if (!body.items || !Array.isArray(body.items)) throw new Error("Items array required");
+    const skus = body.items.map(i => i.sku);
+    if (new Set(skus).size !== skus.length) throw new Error("Duplicate SKUs in items — combine quantities for the same item");
     const data = { ...body, type: body.type || "Manual" };
     const inward = await Inward.create(data);
     for (const item of body.items) {
@@ -111,6 +169,11 @@ router.post("/inward", authenticate, async (req, res) => {
       ...data,
       type: data.type === "Transfer" ? "Transfer Inward" : data.type || "Inward"
     });
+    // If this is a Transfer Inward, update the corresponding Transfer Outward's status
+    if ((data.type || "").includes("Transfer")) {
+      await syncTransferOutwardStatus(data.gatePassNo);
+      broadcast({ type: "DATA_UPDATED", path: "outward" });
+    }
     broadcast({ type: "DATA_UPDATED", path: "inward" });
     broadcast({ type: "DATA_UPDATED", path: "inventory" });
     broadcast({ type: "DATA_UPDATED", path: "transactions" });
@@ -134,6 +197,10 @@ router.put("/inward/:id", authenticate, async (req, res) => {
     if (!oldItem) throw new Error("Item not found");
     const newData = { ...req.body };
     delete newData._id;
+    // For Transfer Inward, store = destination godown. Recompute in case frontend sent stale value.
+    if ((newData.type || "").includes("Transfer") && (newData.type || "").includes("Inward") && newData.destinationProject) {
+      newData.store = newData.destinationProject;
+    }
     for (const item of oldItem.items) {
       await updateStock("Inward", item.sku, item.itemName, -item.qty, item.unit || "NOS", oldItem.category || "General", null, oldItem.store);
     }
@@ -145,6 +212,14 @@ router.put("/inward/:id", authenticate, async (req, res) => {
       { id: req.params.id },
       { ...newData, type: newData.type === "Transfer" ? "Transfer Inward" : newData.type || "Inward" }
     );
+    // Re-sync Transfer Outward status for old and new gate pass (handles gate pass change on edit)
+    if ((newData.type || "").includes("Transfer")) {
+      if (oldItem.gatePassNo && oldItem.gatePassNo !== newData.gatePassNo) {
+        await syncTransferOutwardStatus(oldItem.gatePassNo);
+      }
+      await syncTransferOutwardStatus(newData.gatePassNo);
+      broadcast({ type: "DATA_UPDATED", path: "outward" });
+    }
     broadcast({ type: "DATA_UPDATED", path: "inward" });
     broadcast({ type: "DATA_UPDATED", path: "inventory" });
     broadcast({ type: "DATA_UPDATED", path: "transactions" });
@@ -161,17 +236,11 @@ router.put("/inward/:id", authenticate, async (req, res) => {
   }
 });
 router.delete("/inward/:id", authenticate, async (req, res) => {
-  const session = { startTransaction: /* @__PURE__ */ __name(() => {
-  }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
-  }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
-  }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession"), inTransaction: () => true };
-  session.startTransaction();
   try {
     const item = await Inward.findOne({ id: req.params.id });
     if (item) {
       for (const it of item.items) {
-        await updateStock("Inward", it.sku, it.itemName, -it.qty, it.unit || "NOS", item.category || "General", session, item.store);
+        await updateStock("Inward", it.sku, it.itemName, -it.qty, it.unit || "NOS", item.category || "General", null, item.store);
       }
       await Inward.findOneAndDelete({ id: req.params.id });
       await Transaction.findOneAndDelete({ id: req.params.id });
@@ -186,41 +255,36 @@ router.delete("/inward/:id", authenticate, async (req, res) => {
         deletedBy: req.user.name,
         itemSkus: item.items.map((i) => i.sku)
       });
+      // If Transfer Inward deleted, reset linked Transfer Outward status to Pending
+      if ((item.type || "").includes("Transfer") && item.gatePassNo) {
+        await syncTransferOutwardStatus(item.gatePassNo);
+        broadcast({ type: "DATA_UPDATED", path: "outward" });
+      }
     }
-    await session.commitTransaction();
     broadcast({ type: "DATA_UPDATED", path: "inward" });
     broadcast({ type: "DATA_UPDATED", path: "inventory" });
     broadcast({ type: "DATA_UPDATED", path: "transactions" });
     res.json({ success: true });
   } catch (error) {
-    await session.abortTransaction();
     res.status(400).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
   }
 });
 router.post("/outward", authenticate, async (req, res) => {
-  const session = { startTransaction: /* @__PURE__ */ __name(() => {
-  }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
-  }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
-  }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession"), inTransaction: () => true };
-  session.startTransaction();
   try {
     const body = req.body;
     if (!body.items || !Array.isArray(body.items)) throw new Error("Items array required");
+    const outSkus = body.items.map(i => i.sku);
+    if (new Set(outSkus).size !== outSkus.length) throw new Error("Duplicate SKUs in items — combine quantities for the same item");
     const data = {
       ...body,
       status: "Confirmed",
       type: body.type || (body.mrId ? "MR-Outward" : "Manual")
     };
-    const outward = await Outward.create([data]);
+    // Pre-validate ALL items before creating any documents (prevents orphaned Outward on stock failure)
     for (const item of body.items) {
+      const inv = await Inventory.findOne({ sku: item.sku });
+      if (!inv) throw new Error(`Inventory item not found for SKU ${item.sku}`);
       if (body.mrId) {
-        let allocation = await MRAllocation.findOne({
-          mrId: body.mrId,
-          sku: item.sku
-        });
         const mr = await MaterialRequirement.findOne({ id: body.mrId });
         if (!mr) throw new Error("Material Requirement not found");
         const mrItem = mr.items.find((i) => i.sku === item.sku);
@@ -229,8 +293,30 @@ router.post("/outward", authenticate, async (req, res) => {
         if (totalAfterThis > mrItem.qty) {
           throw new Error(`Cannot issue ${item.qty} for ${item.itemName}. Total issued (${totalAfterThis}) would exceed requested quantity (${mrItem.qty}).`);
         }
-        const inv = await Inventory.findOne({ sku: item.sku });
-        if (!inv) throw new Error(`Inventory item not found for ${item.sku}`);
+        if (body.store && getSiteStock(inv, body.store) < item.qty) {
+          throw new Error(`Insufficient stock at ${body.store} for ${item.itemName}. Available: ${getSiteStock(inv, body.store)}, Requested: ${item.qty}`);
+        }
+        const allocation = await MRAllocation.findOne({ mrId: body.mrId, sku: item.sku });
+        const fromAllocation = allocation ? Math.min(item.qty, allocation.remainingQty || 0) : 0;
+        const fromAvailable = item.qty - fromAllocation;
+        if (fromAvailable > 0 && inv.availableQty < fromAvailable) {
+          throw new Error(`Insufficient available stock for ${item.itemName}. Need ${fromAvailable} more, but only ${inv.availableQty} available.`);
+        }
+      } else {
+        const storeAvail = body.store ? getSiteStock(inv, body.store) : inv.availableQty;
+        if (storeAvail < item.qty) {
+          const where = body.store ? ` at ${body.store}` : "";
+          throw new Error(`Insufficient stock${where} for ${item.itemName}. Available: ${storeAvail}, Requested: ${item.qty}`);
+        }
+      }
+    }
+    // All validations passed — now create documents and apply stock changes
+    const outward = await Outward.create([data]);
+    for (const item of body.items) {
+      if (body.mrId) {
+        let allocation = await MRAllocation.findOne({ mrId: body.mrId, sku: item.sku });
+        const mr = await MaterialRequirement.findOne({ id: body.mrId });
+        const mrItem = mr.items.find((i) => i.sku === item.sku);
         let fromAllocation = 0;
         let fromAvailable = 0;
         if (allocation && allocation.remainingQty > 0) {
@@ -238,9 +324,6 @@ router.post("/outward", authenticate, async (req, res) => {
           fromAvailable = item.qty - fromAllocation;
         } else {
           fromAvailable = item.qty;
-        }
-        if (fromAvailable > 0 && inv.availableQty < fromAvailable) {
-          throw new Error(`Insufficient available stock for ${item.itemName}. Need ${fromAvailable} more, but only ${inv.availableQty} available.`);
         }
         if (allocation) {
           allocation.issuedQty = (allocation.issuedQty || 0) + fromAllocation;
@@ -256,21 +339,15 @@ router.post("/outward", authenticate, async (req, res) => {
         const allClosed = allItems.length > 0 && allItems.every((i) => i.issuedQty >= i.qty);
         mr.status = allClosed ? "Closed" : "Partially Issued";
         await mr.save({});
-        inv.liveStock = (inv.liveStock || 0) - item.qty;
-        inv.allocatedQty = (inv.allocatedQty || 0) - fromAllocation;
+        const inv = await Inventory.findOne({ sku: item.sku });
+        inv.liveStock = Math.max(0, (inv.liveStock || 0) - item.qty);
+        inv.allocatedQty = Math.max(0, (inv.allocatedQty || 0) - fromAllocation);
         inv.issuedQty = (inv.issuedQty || 0) + item.qty;
         if (body.store) {
           applyStoreDelta(inv, body.store, Math.max(0, getSiteStock(inv, body.store) - item.qty));
         }
         await inv.save({});
       } else {
-        const inv = await Inventory.findOne({ sku: item.sku });
-        if (!inv) throw new Error(`Inventory item not found for SKU ${item.sku}`);
-        const storeAvail = body.store ? getSiteStock(inv, body.store) : inv.availableQty;
-        if (storeAvail < item.qty) {
-          const where = body.store ? ` at ${body.store}` : "";
-          throw new Error(`Insufficient stock${where} for ${item.itemName}. Available: ${storeAvail}, Requested: ${item.qty}`);
-        }
         await updateStock(
           data.type === "Transfer" ? "Transfer Outward" : "Outward",
           item.sku,
@@ -278,16 +355,16 @@ router.post("/outward", authenticate, async (req, res) => {
           item.qty,
           item.unit,
           body.category || "General",
-          session,
+          null,
           body.store
         );
       }
     }
+    // H3: Map "MR-Outward" to "Outward" for Transaction (MR-Outward not in Transaction enum)
     await Transaction.create([{
       ...data,
-      type: data.type === "Transfer" ? "Transfer Outward" : data.type || "Outward"
+      type: data.type === "Transfer" ? "Transfer Outward" : (data.type === "MR-Outward" ? "Outward" : data.type || "Outward")
     }]);
-    await session.commitTransaction();
     logAudit(req.user, "CREATE", "Outward", data.id, { mrId: body.mrId, project: data.project, itemCount: body.items?.length });
     broadcast({ type: "DATA_UPDATED", path: "outward" });
     broadcast({ type: "DATA_UPDATED", path: "inventory" });
@@ -303,23 +380,18 @@ router.post("/outward", authenticate, async (req, res) => {
     await checkAndFireLowStockWebhook(body.items.map((i) => i.sku));
     res.json({ success: true, data: outward[0] });
   } catch (error) {
-    await session.abortTransaction();
     res.status(400).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
   }
 });
 router.put("/outward/:id", authenticate, async (req, res) => {
-  const session = { startTransaction: /* @__PURE__ */ __name(() => {
-  }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
-  }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
-  }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession"), inTransaction: () => true };
-  session.startTransaction();
   try {
     const oldItem = await Outward.findOne({ id: req.params.id });
     if (!oldItem) throw new Error("Item not found");
     const data = req.body;
+    // For Transfer Outward, store = source godown (project). Recompute in case frontend sent stale value.
+    if ((data.type || "").includes("Transfer") && (data.type || "").includes("Outward") && data.project) {
+      data.store = data.project;
+    }
     const effectiveMrId = oldItem.mrId || oldItem.mrNo;
     if (effectiveMrId) {
       // MR-linked: reverse old inventory state using MR allocation fields
@@ -365,6 +437,10 @@ router.put("/outward/:id", authenticate, async (req, res) => {
           inv.liveStock = (inv.liveStock || 0) + it.qty;
           inv.issuedQty = Math.max(0, (inv.issuedQty || 0) - it.qty);
           inv.allocatedQty = (inv.allocatedQty || 0) + fromAllocation;
+          // H5: Restore locationStock/sites[] on MR-linked reversal
+          if (oldItem.store) {
+            applyStoreDelta(inv, oldItem.store, getSiteStock(inv, oldItem.store) + it.qty);
+          }
           await inv.save({});
         }
       }
@@ -390,6 +466,10 @@ router.put("/outward/:id", authenticate, async (req, res) => {
         } else {
           fromAvailable = it.qty;
         }
+        // H6: Validate store-level stock for MR-linked outward
+        if (data.store && getSiteStock(inv, data.store) < it.qty) {
+          throw new Error(`Insufficient stock at ${data.store} for ${it.itemName}. Available: ${getSiteStock(inv, data.store)}, Requested: ${it.qty}`);
+        }
         if (fromAvailable > 0 && inv.availableQty < fromAvailable) {
           throw new Error(`Insufficient stock for ${it.itemName}. Available: ${inv.availableQty}, Needed: ${fromAvailable}`);
         }
@@ -404,31 +484,37 @@ router.put("/outward/:id", authenticate, async (req, res) => {
         const allClosed = mr.items.every((i) => (i.issuedQty || 0) >= i.qty);
         mr.status = allClosed ? "Closed" : "Partially Issued";
         await mr.save({});
-        inv.liveStock = (inv.liveStock || 0) - it.qty;
-        inv.allocatedQty = (inv.allocatedQty || 0) - fromAllocation;
+        inv.liveStock = Math.max(0, (inv.liveStock || 0) - it.qty);
+        inv.allocatedQty = Math.max(0, (inv.allocatedQty || 0) - fromAllocation);
         inv.issuedQty = (inv.issuedQty || 0) + it.qty;
+        // H5: Update locationStock/sites[] on MR-linked re-apply
+        if (data.store) {
+          applyStoreDelta(inv, data.store, Math.max(0, getSiteStock(inv, data.store) - it.qty));
+        }
         await inv.save({});
       }
     } else {
       // Non-MR-linked: reverse old, check stock, apply new
       for (const it of oldItem.items) {
-        await updateStock("Outward", it.sku, it.itemName, -it.qty, it.unit, oldItem.category || "General", session);
+        await updateStock("Outward", it.sku, it.itemName, -it.qty, it.unit, oldItem.category || "General", null, oldItem.store);
       }
       for (const it of data.items) {
         const inv = await Inventory.findOne({ sku: it.sku });
         if (!inv) throw new Error(`Inventory not found for SKU ${it.sku}`);
-        if (inv.availableQty < it.qty) {
-          throw new Error(`Insufficient stock for ${it.itemName}. Available: ${inv.availableQty}, Requested: ${it.qty}`);
+        const storeAvail = data.store ? getSiteStock(inv, data.store) : inv.availableQty;
+        if (storeAvail < it.qty) {
+          const where = data.store ? ` at ${data.store}` : "";
+          throw new Error(`Insufficient stock${where} for ${it.itemName}. Available: ${storeAvail}, Requested: ${it.qty}`);
         }
-        await updateStock("Outward", it.sku, it.itemName, it.qty, it.unit, data.category || "General", session);
+        await updateStock("Outward", it.sku, it.itemName, it.qty, it.unit, data.category || "General", null, data.store);
       }
     }
-    const item = await Outward.findOneAndUpdate({ id: req.params.id }, data, { returnDocument: 'after' });
+    const { _id: _oid, __v, ...updateData } = data;
+    const item = await Outward.findOneAndUpdate({ id: req.params.id }, updateData, { returnDocument: 'after' });
     await Transaction.findOneAndUpdate({ id: req.params.id }, {
-      ...data,
-      type: data.type === "Transfer" ? "Transfer Outward" : data.type || "Outward"
+      ...updateData,
+      type: updateData.type === "Transfer" ? "Transfer Outward" : updateData.type || "Outward"
     });
-    await session.commitTransaction();
     broadcast({ type: "DATA_UPDATED", path: "outward" });
     broadcast({ type: "DATA_UPDATED", path: "inventory" });
     broadcast({ type: "DATA_UPDATED", path: "transactions" });
@@ -441,19 +527,10 @@ router.put("/outward/:id", authenticate, async (req, res) => {
     await checkAndFireLowStockWebhook(data.items.map((i) => i.sku));
     res.json({ success: true, data: item });
   } catch (error) {
-    await session.abortTransaction();
     res.status(400).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
   }
 });
 router.delete("/outward/:id", authenticate, async (req, res) => {
-  const session = { startTransaction: /* @__PURE__ */ __name(() => {
-  }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
-  }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
-  }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession"), inTransaction: () => true };
-  session.startTransaction();
   try {
     const item = await Outward.findOne({ id: req.params.id });
     if (item) {
@@ -500,16 +577,30 @@ router.delete("/outward/:id", authenticate, async (req, res) => {
             }
           }
           inv.liveStock = (inv.liveStock || 0) + it.qty;
-          inv.issuedQty = Math.max(0, (inv.issuedQty || 0) - it.qty);
-          inv.allocatedQty = (inv.allocatedQty || 0) + fromAllocation;
+          if (effectiveMrId) {
+            // MR-linked: reverse issuedQty and restore allocatedQty
+            inv.issuedQty = Math.max(0, (inv.issuedQty || 0) - it.qty);
+            inv.allocatedQty = (inv.allocatedQty || 0) + fromAllocation;
+          } else {
+            // Non-MR: only totalQty and availableQty were changed on creation
+            inv.totalQty = (inv.totalQty || 0) + it.qty;
+            inv.availableQty = (inv.availableQty || 0) + it.qty;
+          }
+          // Restore both locationStock AND sites[] when deleting outward
           if (item.store) {
-            const curr = Number(inv.locationStock?.get(item.store) || 0);
-            inv.locationStock.set(item.store, curr + it.qty);
+            if (!inv.locationStock) inv.locationStock = new Map();
+            if (!inv.sites) inv.sites = [];
+            const curr = inv.locationStock.has(item.store) ? Number(inv.locationStock.get(item.store)) : (inv.sites.find(s => s.siteName === item.store)?.liveStock || 0);
+            const newQty = curr + it.qty;
+            inv.locationStock.set(item.store, newQty);
             inv.markModified("locationStock");
+            const se = inv.sites.find(s => s.siteName === item.store);
+            if (se) { se.liveStock = newQty; } else { inv.sites.push({ siteName: item.store, siteCode: "", openingStock: 0, liveStock: newQty }); }
+            inv.markModified("sites");
           }
           await inv.save({});
         } else {
-          await updateStock("Outward", it.sku, it.itemName, -it.qty, it.unit, item.category || "General", session, item.store);
+          await updateStock("Outward", it.sku, it.itemName, -it.qty, it.unit, item.category || "General", null, item.store);
         }
       }
       await Outward.findOneAndDelete({ id: req.params.id });
@@ -526,7 +617,6 @@ router.delete("/outward/:id", authenticate, async (req, res) => {
         itemSkus: item.items.map((i) => i.sku)
       });
     }
-    await session.commitTransaction();
     broadcast({ type: "DATA_UPDATED", path: "outward" });
     broadcast({ type: "DATA_UPDATED", path: "inventory" });
     broadcast({ type: "DATA_UPDATED", path: "transactions" });
@@ -534,28 +624,41 @@ router.delete("/outward/:id", authenticate, async (req, res) => {
     broadcast({ type: "DATA_UPDATED", path: "mr-allocations" });
     res.json({ success: true });
   } catch (error) {
-    await session.abortTransaction();
     res.status(400).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
+  }
+});
+router.patch("/outward/:id/transfer-status", authenticate, async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!["Pending", "Fulfilled", "Partially Complete"].includes(status)) {
+      throw new Error("Invalid status");
+    }
+    const item = await Outward.findOneAndUpdate(
+      { id: req.params.id },
+      { transferStatus: status },
+      { returnDocument: "after" }
+    );
+    if (!item) throw new Error("Transfer Outward not found");
+    broadcast({ type: "DATA_UPDATED", path: "outward" });
+    res.json({ success: true, data: item });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
   }
 });
 router.post("/inward-returns", authenticate, async (req, res) => {
-  const session = { startTransaction: /* @__PURE__ */ __name(() => {
-  }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
-  }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
-  }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession"), inTransaction: () => true };
-  session.startTransaction();
   try {
     const data = req.body;
     if (!data.items || !Array.isArray(data.items)) throw new Error("Items array required");
+    for (const it of data.items) {
+      const invCheck = await Inventory.findOne({ sku: it.sku });
+      if (!invCheck) throw new Error(`Item not found in inventory: ${it.sku}`);
+      if ((invCheck.availableQty || 0) < it.qty) throw new Error(`Insufficient stock to return for ${it.itemName}. Available: ${invCheck.availableQty || 0}, Requested: ${it.qty}`);
+    }
     const item = await InwardReturn.create([data]);
     for (const it of data.items) {
-      await updateStock("Inward Return", it.sku, it.itemName, it.qty, it.unit, data.category || "General", session, data.store);
+      await updateStock("Inward Return", it.sku, it.itemName, it.qty, it.unit, data.category || "General", null, data.store);
     }
     await Transaction.create([{ ...data, type: "Inward Return" }]);
-    await session.commitTransaction();
     logAudit(req.user, "CREATE", "InwardReturn", data.id, { supplier: data.supplier, itemCount: data.items?.length });
     broadcast({ type: "DATA_UPDATED", path: "inward-returns" });
     broadcast({ type: "DATA_UPDATED", path: "inventory" });
@@ -575,32 +678,22 @@ router.post("/inward-returns", authenticate, async (req, res) => {
     await checkAndFireLowStockWebhook(data.items.map((i) => i.sku));
     res.json({ success: true, data: item[0] });
   } catch (error) {
-    await session.abortTransaction();
     res.status(400).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
   }
 });
 router.put("/inward-returns/:id", authenticate, async (req, res) => {
-  const session = { startTransaction: /* @__PURE__ */ __name(() => {
-  }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
-  }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
-  }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession"), inTransaction: () => true };
-  session.startTransaction();
   try {
     const oldItem = await InwardReturn.findOne({ id: req.params.id });
     if (!oldItem) throw new Error("Item not found");
-    const data = req.body;
+    const { _id: _oid1, __v: _v1, ...data } = req.body;
     for (const it of oldItem.items) {
-      await updateStock("Inward Return", it.sku, it.itemName, -it.qty, it.unit, "General", session, oldItem.store);
+      await updateStock("Inward Return", it.sku, it.itemName, -it.qty, it.unit, "General", null, oldItem.store);
     }
     for (const it of data.items) {
-      await updateStock("Inward Return", it.sku, it.itemName, it.qty, it.unit, "General", session, data.store);
+      await updateStock("Inward Return", it.sku, it.itemName, it.qty, it.unit, "General", null, data.store);
     }
     const item = await InwardReturn.findOneAndUpdate({ id: req.params.id }, data, { returnDocument: 'after' });
     await Transaction.findOneAndUpdate({ id: req.params.id }, { ...data, type: "Inward Return" });
-    await session.commitTransaction();
     broadcast({ type: "DATA_UPDATED", path: "inward-returns" });
     broadcast({ type: "DATA_UPDATED", path: "inventory" });
     broadcast({ type: "DATA_UPDATED", path: "transactions" });
@@ -613,24 +706,15 @@ router.put("/inward-returns/:id", authenticate, async (req, res) => {
     await checkAndFireLowStockWebhook(data.items.map((i) => i.sku));
     res.json({ success: true, data: item });
   } catch (error) {
-    await session.abortTransaction();
     res.status(400).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
   }
 });
 router.delete("/inward-returns/:id", authenticate, async (req, res) => {
-  const session = { startTransaction: /* @__PURE__ */ __name(() => {
-  }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
-  }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
-  }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession"), inTransaction: () => true };
-  session.startTransaction();
   try {
     const item = await InwardReturn.findOne({ id: req.params.id });
     if (item) {
       for (const it of item.items) {
-        await updateStock("Inward Return", it.sku, it.itemName, -it.qty, it.unit, "General", session, item.store);
+        await updateStock("Inward Return", it.sku, it.itemName, -it.qty, it.unit, "General", null, item.store);
       }
       await InwardReturn.findOneAndDelete({ id: req.params.id });
       await Transaction.findOneAndDelete({ id: req.params.id });
@@ -646,34 +730,23 @@ router.delete("/inward-returns/:id", authenticate, async (req, res) => {
         itemSkus: item.items.map((i) => i.sku)
       });
     }
-    await session.commitTransaction();
     broadcast({ type: "DATA_UPDATED", path: "inward-returns" });
     broadcast({ type: "DATA_UPDATED", path: "inventory" });
     broadcast({ type: "DATA_UPDATED", path: "transactions" });
     res.json({ success: true });
   } catch (error) {
-    await session.abortTransaction();
     res.status(400).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
   }
 });
 router.post("/outward-returns", authenticate, async (req, res) => {
-  const session = { startTransaction: /* @__PURE__ */ __name(() => {
-  }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
-  }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
-  }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession"), inTransaction: () => true };
-  session.startTransaction();
   try {
     const data = req.body;
     if (!data.items || !Array.isArray(data.items)) throw new Error("Items array required");
     const item = await OutwardReturn.create([data]);
     for (const it of data.items) {
-      await updateStock("Outward Return", it.sku, it.itemName, it.qty, it.unit, data.category || "General", session, data.store);
+      await updateStock("Outward Return", it.sku, it.itemName, it.qty, it.unit, data.category || "General", null, data.store);
     }
     await Transaction.create([{ ...data, type: "Outward Return" }]);
-    await session.commitTransaction();
     logAudit(req.user, "CREATE", "OutwardReturn", data.id, { sourceSite: data.sourceSite, itemCount: data.items?.length });
     broadcast({ type: "DATA_UPDATED", path: "outward-returns" });
     broadcast({ type: "DATA_UPDATED", path: "inventory" });
@@ -693,32 +766,22 @@ router.post("/outward-returns", authenticate, async (req, res) => {
     await checkAndFireLowStockWebhook(data.items.map((i) => i.sku));
     res.json({ success: true, data: item[0] });
   } catch (error) {
-    await session.abortTransaction();
     res.status(400).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
   }
 });
 router.put("/outward-returns/:id", authenticate, async (req, res) => {
-  const session = { startTransaction: /* @__PURE__ */ __name(() => {
-  }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
-  }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
-  }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession"), inTransaction: () => true };
-  session.startTransaction();
   try {
     const oldItem = await OutwardReturn.findOne({ id: req.params.id });
     if (!oldItem) throw new Error("Item not found");
-    const data = req.body;
+    const { _id: _oid2, __v: _v2, ...data } = req.body;
     for (const it of oldItem.items) {
-      await updateStock("Outward Return", it.sku, it.itemName, -it.qty, it.unit, oldItem.category || "General", session, oldItem.store);
+      await updateStock("Outward Return", it.sku, it.itemName, -it.qty, it.unit, oldItem.category || "General", null, oldItem.store);
     }
     for (const it of data.items) {
-      await updateStock("Outward Return", it.sku, it.itemName, it.qty, it.unit, data.category || "General", session, data.store);
+      await updateStock("Outward Return", it.sku, it.itemName, it.qty, it.unit, data.category || "General", null, data.store);
     }
     const item = await OutwardReturn.findOneAndUpdate({ id: req.params.id }, data, { returnDocument: 'after' });
     await Transaction.findOneAndUpdate({ id: req.params.id }, { ...data, type: "Outward Return" });
-    await session.commitTransaction();
     broadcast({ type: "DATA_UPDATED", path: "outward-returns" });
     broadcast({ type: "DATA_UPDATED", path: "inventory" });
     broadcast({ type: "DATA_UPDATED", path: "transactions" });
@@ -730,24 +793,15 @@ router.put("/outward-returns/:id", authenticate, async (req, res) => {
     });
     res.json({ success: true, data: item });
   } catch (error) {
-    await session.abortTransaction();
     res.status(400).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
   }
 });
 router.delete("/outward-returns/:id", authenticate, async (req, res) => {
-  const session = { startTransaction: /* @__PURE__ */ __name(() => {
-  }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
-  }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
-  }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession"), inTransaction: () => true };
-  session.startTransaction();
   try {
     const item = await OutwardReturn.findOne({ id: req.params.id });
     if (item) {
       for (const it of item.items) {
-        await updateStock("Outward Return", it.sku, it.itemName, -it.qty, it.unit, "General", session, item.store);
+        await updateStock("Outward Return", it.sku, it.itemName, -it.qty, it.unit, "General", null, item.store);
       }
       await OutwardReturn.findOneAndDelete({ id: req.params.id });
       await Transaction.findOneAndDelete({ id: req.params.id });
@@ -763,16 +817,12 @@ router.delete("/outward-returns/:id", authenticate, async (req, res) => {
         itemSkus: item.items.map((i) => i.sku)
       });
     }
-    await session.commitTransaction();
     broadcast({ type: "DATA_UPDATED", path: "outward-returns" });
     broadcast({ type: "DATA_UPDATED", path: "inventory" });
     broadcast({ type: "DATA_UPDATED", path: "transactions" });
     res.json({ success: true });
   } catch (error) {
-    await session.abortTransaction();
     res.status(400).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
   }
 });
 const inwardCrudRouter = Router();
@@ -819,7 +869,8 @@ router.get("/transactions", authenticate, async (req, res) => {
       }
     }
     if (search) {
-      const searchRegex = new RegExp(search.replace(/[.*+?^${}()|[]\]/g, "$&"), "i");
+      // C7: Properly escape regex to prevent ReDoS
+      const searchRegex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       query.$or = [
         { id: searchRegex },
         { date: searchRegex },
@@ -832,7 +883,8 @@ router.get("/transactions", authenticate, async (req, res) => {
     }
     if (filterStr) {
       const { startDate: _, endDate: __, ...restFilter } = parsedFilter;
-      query = { ...query, ...restFilter };
+      // C6: Sanitize filter to prevent MongoDB operator injection
+      query = { ...query, ...sanitizeFilter(restFilter) };
     }
     const [items, total] = await Promise.all([
       Transaction.find(query).sort({ date: -1, createdAt: -1 }).skip(skip).limit(limit).lean(),
@@ -848,8 +900,6 @@ router.get("/transactions", authenticate, async (req, res) => {
   }
 });
 router.post("/transactions", authenticate, async (req, res) => {
-  const session = await Transaction.startSession();
-  session.startTransaction();
   try {
     const transactionData = { ...req.body };
     if (transactionData.condition && typeof transactionData.condition === "string") {
@@ -871,18 +921,21 @@ router.post("/transactions", authenticate, async (req, res) => {
         stockChange = item.qty;
       } else if (["Outward", "Public Outward", "Inward Return", "Transfer Outward"].includes(transactionData.type)) {
         if (transactionData.type.includes("Outward") || transactionData.type === "Inward Return" || transactionData.type === "Transfer Outward") {
-          if (invItem.liveStock < item.qty) {
-            throw new Error(`Insufficient stock for ${invItem.itemName} (SKU: ${item.sku}). Available: ${invItem.liveStock}, Requested: ${item.qty}`);
+          if ((invItem.availableQty || 0) < item.qty) {
+            throw new Error(`Insufficient available stock for ${invItem.itemName} (SKU: ${item.sku}). Available: ${invItem.availableQty || 0}, Requested: ${item.qty}`);
           }
         }
         stockChange = -item.qty;
       }
-      invItem.liveStock += stockChange;
+      invItem.liveStock = Math.max(0, invItem.liveStock + stockChange);
       if (transactionData.project) invItem.lastProject = transactionData.project;
+      // H4: Also update locationStock and sites[] so per-godown stock stays in sync
+      if (transactionData.store && stockChange !== 0) {
+        applyStoreDelta(invItem, transactionData.store, Math.max(0, getSiteStock(invItem, transactionData.store) + stockChange));
+      }
       await invItem.save({});
     }
     const transaction = await Transaction.create([transactionData]);
-    await session.commitTransaction();
     logAudit(req.user, "CREATE", "Transaction", transactionData.id, { type: transactionData.type, project: transactionData.project, itemCount: transactionData.items?.length });
     broadcast({ type: "DATA_UPDATED", path: "transactions" });
     broadcast({ type: "DATA_UPDATED", path: "inventory" });
@@ -898,19 +951,10 @@ router.post("/transactions", authenticate, async (req, res) => {
     await checkAndFireLowStockWebhook(transactionData.items.map((i) => i.sku));
     res.json({ success: true, data: transaction[0] });
   } catch (error) {
-    await session.abortTransaction();
     res.status(400).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
   }
 });
 router.delete("/transactions/:id", authenticate, async (req, res) => {
-  const session = { startTransaction: /* @__PURE__ */ __name(() => {
-  }, "startTransaction"), commitTransaction: /* @__PURE__ */ __name(async () => {
-  }, "commitTransaction"), abortTransaction: /* @__PURE__ */ __name(async () => {
-  }, "abortTransaction"), endSession: /* @__PURE__ */ __name(() => {
-  }, "endSession"), inTransaction: () => true };
-  session.startTransaction();
   try {
     const tx = await Transaction.findOne({ id: req.params.id });
     if (!tx) throw new Error("Transaction not found");
@@ -960,31 +1004,58 @@ router.delete("/transactions/:id", authenticate, async (req, res) => {
         const inv = await Inventory.findOne({ sku: it.sku });
         if (inv) {
           inv.liveStock = (inv.liveStock || 0) + it.qty;
-          inv.issuedQty = Math.max(0, (inv.issuedQty || 0) - it.qty);
-          inv.allocatedQty = (inv.allocatedQty || 0) + fromAllocationTotal;
+          const effectiveMrId = tx.mrId || tx.mrNo;
+          if (effectiveMrId) {
+            inv.issuedQty = Math.max(0, (inv.issuedQty || 0) - it.qty);
+            inv.allocatedQty = (inv.allocatedQty || 0) + fromAllocationTotal;
+          } else {
+            inv.totalQty = (inv.totalQty || 0) + it.qty;
+            inv.availableQty = (inv.availableQty || 0) + it.qty;
+          }
+          if (tx.store) {
+            const curr = inv.locationStock && inv.locationStock.has(tx.store) ? Number(inv.locationStock.get(tx.store)) : ((inv.sites || []).find(s => s.siteName === tx.store)?.liveStock || 0);
+            applyStoreDelta(inv, tx.store, curr + it.qty);
+          }
           await inv.save({});
+        }
+      }
+    } else {
+      // Inward-type deletion — reverse stock additions
+      const isInward = ["Inward", "Transfer Inward", "Public Inward", "Public Transfer Inward", "GRN"].includes(tx.type) || tx.type.toLowerCase().includes("inward");
+      if (isInward) {
+        for (const it of tx.items || []) {
+          if (!it.sku) continue;
+          const inv = await Inventory.findOne({ sku: it.sku });
+          if (inv) {
+            inv.liveStock = Math.max(0, (inv.liveStock || 0) - it.qty);
+            inv.totalQty = Math.max(0, (inv.totalQty || 0) - it.qty);
+            inv.availableQty = Math.max(0, (inv.availableQty || 0) - it.qty);
+            if (tx.store) {
+              const curr = getSiteStock(inv, tx.store);
+              applyStoreDelta(inv, tx.store, Math.max(0, curr - it.qty));
+            }
+            await inv.save({});
+          }
         }
       }
     }
     await Transaction.findOneAndDelete({ id: req.params.id });
     await Outward.findOneAndDelete({ id: req.params.id });
-    await session.commitTransaction();
+    await Inward.findOneAndDelete({ id: req.params.id });
     broadcast({ type: "DATA_UPDATED", path: "transactions" });
     broadcast({ type: "DATA_UPDATED", path: "outward" });
+    broadcast({ type: "DATA_UPDATED", path: "inward" });
     broadcast({ type: "DATA_UPDATED", path: "inventory" });
     broadcast({ type: "DATA_UPDATED", path: "material-requirements" });
     broadcast({ type: "DATA_UPDATED", path: "mr-allocations" });
-    await triggerN8nWebhook("INWARD_DELETE", {
+    await triggerN8nWebhook("TRANSACTION_DELETE", {
       transactionId: req.params.id,
       type: tx.type,
       deletedBy: req.user?.name || "system"
     });
     res.json({ success: true });
   } catch (error) {
-    if (session.inTransaction()) await session.abortTransaction();
     res.status(400).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
   }
 });
 router.get("/gate-passes/available", authenticate, async (req, res) => {
@@ -1021,7 +1092,7 @@ router.get("/gate-passes/available", authenticate, async (req, res) => {
 });
 router.get("/gate-passes/:gatePassNo", authenticate, async (req, res) => {
   try {
-    const gp = req.params.gatePassNo;
+    const gp = req.params.gatePassNo.trim();
     const OUTWARD_TYPES = ["Transfer Outward", "Public Transfer Outward", "Transfer"];
     // Search both collections; fall back to any-type search if strict-type misses
     const [txResult, dbResult] = await Promise.all([

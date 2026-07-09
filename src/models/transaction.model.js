@@ -73,7 +73,7 @@ const OutwardSchema = new Schema({
   destinationProject: String,
   gatePassNo:         String,
   category:           String,
-  type:               { type: String, enum: ["Manual","Transfer","Public Outward","Public Transfer Outward","Outward","Transfer Outward","Outward Return","Public Outward Return"], default: "Manual" },
+  type:               { type: String, enum: ["Manual","Transfer","MR-Outward","Public Outward","Public Transfer Outward","Outward","Transfer Outward","Outward Return","Public Outward Return"], default: "Manual" },
   materialPhotoUrl:   String,
   handoverPhotoUrl:   String,
   personPhotoUrl:     String,
@@ -88,6 +88,8 @@ const OutwardSchema = new Schema({
   items:              { type: [TransactionItemSchema], required: true },
   mrId:               String,
   poId:               String,
+  transferStatus:     { type: String, enum: ["Pending", "Fulfilled", "Partially Complete"], default: "Pending" },
+  transferVariance:   { type: Number, default: 0 },
 }, { timestamps: true });
 
 OutwardSchema.index({ project: 1 });
@@ -98,10 +100,12 @@ export const Outward = mongoose.model("Outward", OutwardSchema);
 const InwardReturnSchema = new Schema({
   id:               { type: String, required: true, unique: true },
   date:             { type: String, required: true },
-  condition:        { type: String, enum: ["New","Good","Needs Repair","Damaged","NEW","GOOD","NEEDS REPAIR","DAMAGED"], default: "Good" },
+  condition:        { type: String, enum: ["New","Good","Old","Needs Repair","Damaged","NEW","GOOD","OLD","NEEDS REPAIR","DAMAGED"], default: "Good" },
   supplier:         { type: String, required: true },
   remarks:          String,
   handoverTo:       String,
+  store:            String,
+  project:          String,
   materialPhotoUrl: String,
   challanPhotoUrl:  String,
   items:            { type: [TransactionItemSchema], required: true },
@@ -112,10 +116,12 @@ export const InwardReturn = mongoose.model("InwardReturn", InwardReturnSchema);
 const OutwardReturnSchema = new Schema({
   id:               { type: String, required: true, unique: true },
   date:             { type: String, required: true },
-  condition:        { type: String, enum: ["New","Good","Needs Repair","Damaged","NEW","GOOD","NEEDS REPAIR","DAMAGED"], default: "Good" },
+  condition:        { type: String, enum: ["New","Good","Old","Needs Repair","Damaged","NEW","GOOD","OLD","NEEDS REPAIR","DAMAGED"], default: "Good" },
   sourceSite:       { type: String, required: true },
   remarks:          String,
   handoverFrom:     String,
+  store:            String,
+  project:          String,
   personName:       String,
   personPhotoUrl:   String,
   personPhotos:     [String],
@@ -127,7 +133,7 @@ export const OutwardReturn = mongoose.model("OutwardReturn", OutwardReturnSchema
 
 const TransactionSchema = new Schema({
   id:   { type: String, required: true, unique: true },
-  type: { type: String, required: true, enum: ["Inward","Outward","Inward Return","Outward Return","Public Inward","Public Outward","Public Inward Return","Public Outward Return","Transfer Inward","Transfer Outward","Public Transfer Inward","Public Transfer Outward","Transfer","GRN"] },
+  type: { type: String, required: true, enum: ["Inward","Outward","MR-Outward","Inward Return","Outward Return","Public Inward","Public Outward","Public Inward Return","Public Outward Return","Transfer Inward","Transfer Outward","Public Transfer Inward","Public Transfer Outward","Transfer","GRN"] },
   date:               { type: String, required: true },
   items:              { type: [TransactionItemSchema], required: true },
   project:            String,
