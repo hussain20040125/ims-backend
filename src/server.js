@@ -40,6 +40,7 @@ import publicRoutes from "./routes/public.routes.js";
 import uploadRoutes from "./routes/upload.routes.js";
 import auditRoutes from "./routes/audit.routes.js";
 import gstRateRoutes from "./routes/gstRate.routes.js";
+import formConfigRoutes, { seedFormConfigs } from "./routes/form-config.routes.js";
 import { encryptionMiddleware } from "./middleware/encrypt.middleware.js";
 const IS_PROD = process.env.NODE_ENV === "production";
 if (IS_PROD) {
@@ -103,7 +104,7 @@ app.use(encryptionMiddleware);
 const uploadDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 app.use("/uploads", express.static(uploadDir));
-connectDB();
+connectDB().then(() => seedFormConfigs());
 initBroadcaster(server);
 app.get("/api/health", (_req, res) => res.json({ status: "ok", ts: Date.now() }));
 app.use("/api/auth", authRoutes);
@@ -129,6 +130,7 @@ app.use("/api/public", publicRoutes);
 app.use("/api", uploadRoutes);
 app.use("/api/audit-logs", auditRoutes);
 app.use("/api", gstRateRoutes);
+app.use("/api/form-configs", formConfigRoutes);
 app.post("/api/webhook/n8n", async (req, res) => {
   try {
     const signature = req.headers["x-webhook-secret"];

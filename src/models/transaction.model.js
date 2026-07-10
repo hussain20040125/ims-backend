@@ -53,6 +53,7 @@ const InwardSchema = new Schema({
   challanPhotos:      [String],
   materialPhotoUrl:   String,
   grnRef:             String,
+  extras:             { type: mongoose.Schema.Types.Mixed, default: {} },
   items:              { type: [InwardItemSchema], required: true },
 }, { timestamps: true, collection: "inwards" });
 
@@ -90,6 +91,7 @@ const OutwardSchema = new Schema({
   poId:               String,
   transferStatus:     { type: String, enum: ["Pending", "Fulfilled", "Partially Complete"], default: "Pending" },
   transferVariance:   { type: Number, default: 0 },
+  extras:             { type: mongoose.Schema.Types.Mixed, default: {} },
 }, { timestamps: true });
 
 OutwardSchema.index({ project: 1 });
