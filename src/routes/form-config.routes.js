@@ -125,20 +125,52 @@ router.get("/", authenticate, async (req, res) => {
   }
 });
 
-// PUT update a form config (fields array, label, description)
+// PUT update a form config — saves a version snapshot before applying changes
 router.put("/:formId", authenticate, async (req, res) => {
   try {
     const { fields, formName, description } = req.body;
-    const update = {};
-    if (formName) update.formName = formName;
-    if (description !== undefined) update.description = description;
-    if (fields) update.fields = fields;
-    const config = await FormConfig.findOneAndUpdate(
-      { formId: req.params.formId },
-      update,
-      { new: true, runValidators: true }
-    );
-    if (!config) return res.status(404).json({ success: false, message: "Form config not found" });
+    const existing = await FormConfig.findOne({ formId: req.params.formId });
+    if (!existing) return res.status(404).json({ success: false, message: "Form config not found" });
+
+    // Snapshot current state into versions (keep last 10)
+    if (fields) {
+      const snapshot = { fields: existing.fields.map(f => f.toObject()), savedAt: new Date(), savedBy: req.user?.name || req.user?.email || "unknown" };
+      existing.versions = [...(existing.versions || []), snapshot].slice(-10);
+    }
+    if (formName) existing.formName = formName;
+    if (description !== undefined) existing.description = description;
+    if (fields) existing.fields = fields;
+    await existing.save();
+    broadcast({ type: "DATA_UPDATED", path: "form-configs" });
+    res.json({ success: true, data: existing });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+// GET version history for a form
+router.get("/:formId/versions", authenticate, async (req, res) => {
+  try {
+    const config = await FormConfig.findOne({ formId: req.params.formId }, { versions: 1, formId: 1 });
+    if (!config) return res.status(404).json({ success: false, message: "Form not found" });
+    res.json({ success: true, data: [...(config.versions || [])].reverse() });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// POST restore a form to a specific version index (0 = most recent snapshot)
+router.post("/:formId/versions/:idx/restore", authenticate, async (req, res) => {
+  try {
+    const config = await FormConfig.findOne({ formId: req.params.formId });
+    if (!config) return res.status(404).json({ success: false, message: "Form not found" });
+    const reversed = [...(config.versions || [])].reverse();
+    const version = reversed[Number(req.params.idx)];
+    if (!version) return res.status(404).json({ success: false, message: "Version not found" });
+    // Snapshot current before restoring
+    config.versions = [...(config.versions || []), { fields: config.fields.map(f => f.toObject()), savedAt: new Date(), savedBy: req.user?.name || req.user?.email || "unknown" }].slice(-10);
+    config.fields = version.fields;
+    await config.save();
     broadcast({ type: "DATA_UPDATED", path: "form-configs" });
     res.json({ success: true, data: config });
   } catch (err) {
