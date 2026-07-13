@@ -44,7 +44,14 @@ class AuthService {
     const otpHash = await bcrypt.hash(otp, 10);
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
     await User.findByIdAndUpdate(user._id, { otpHash, otpExpiry, otpAttempts: 0 });
-    await sendOTPEmail(user.email, otp, user.name);
+    try {
+      await sendOTPEmail(user.email, otp, user.name);
+    } catch (emailErr) {
+      // Roll back OTP so user can retry; don't leak partial state
+      await User.findByIdAndUpdate(user._id, { otpHash: null, otpExpiry: null, otpAttempts: 0 }).catch(() => {});
+      console.error("[AuthService] OTP email failed:", emailErr.message);
+      throw new Error("Could not send verification email. Please check your inbox or try again.");
+    }
     return { otpSent: true, email: user.email };
   }
 

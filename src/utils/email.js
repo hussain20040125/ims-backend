@@ -11,7 +11,10 @@ const getTransporter = /* @__PURE__ */ __name(() => {
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS
-      }
+      },
+      connectionTimeout: 5000,
+      greetingTimeout: 5000,
+      socketTimeout: 6000,
     });
   }
   return _transporter;
@@ -103,7 +106,11 @@ const sendOTPEmail = /* @__PURE__ */ __name(async (to, otp, name) => {
     ``,
     `\u2014 Neoteric Properties`
   ].join("\n");
-  await getTransporter().sendMail({ from: fromAddress, to, subject: "Your IMS Login Verification Code", html, text });
+  const sendPromise = getTransporter().sendMail({ from: fromAddress, to, subject: "Your IMS Login Verification Code", html, text });
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error("SMTP timeout: email delivery took too long")), 7000)
+  );
+  await Promise.race([sendPromise, timeoutPromise]);
 }, "sendOTPEmail");
 export {
   sendOTPEmail
