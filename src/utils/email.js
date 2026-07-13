@@ -1,27 +1,40 @@
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 import nodemailer from "nodemailer";
+import dns from "dns/promises";
+
+// Resolve hostname to IPv4 to avoid Render's broken IPv6 → Google SMTP routing
+const resolveIPv4 = /* @__PURE__ */ __name(async (hostname) => {
+  try {
+    const addresses = await dns.resolve4(hostname);
+    return addresses[0];
+  } catch {
+    return hostname;
+  }
+}, "resolveIPv4");
 
 const GMAIL_CONFIGS = [
-  // SSL on port 465 — often allowed when 587 is blocked
-  { host: "smtp.gmail.com", port: 465, secure: true },
-  // STARTTLS on port 587
   { host: "smtp.gmail.com", port: 587, secure: false },
+  { host: "smtp.gmail.com", port: 465, secure: true },
 ];
 
 const tryConfig = /* @__PURE__ */ __name(async (cfg, mailOpts) => {
+  const resolvedHost = await resolveIPv4(cfg.host);
   const transport = nodemailer.createTransport({
-    ...cfg,
+    host: resolvedHost,
+    port: cfg.port,
+    secure: cfg.secure,
+    family: 4,
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    connectionTimeout: 4000,
-    greetingTimeout: 4000,
-    socketTimeout: 5000,
+    connectionTimeout: 6000,
+    greetingTimeout: 6000,
+    socketTimeout: 8000,
     tls: { rejectUnauthorized: false },
   });
   try {
     const sendPromise = transport.sendMail(mailOpts);
     const timeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`SMTP timeout on port ${cfg.port}`)), 5000)
+      setTimeout(() => reject(new Error(`SMTP timeout on port ${cfg.port}`)), 8000)
     );
     await Promise.race([sendPromise, timeout]);
   } finally {

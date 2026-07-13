@@ -54,6 +54,8 @@ if (IS_PROD) {
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 5e3;
+// Required for Render/proxied deployments so rate-limit sees real client IPs
+app.set("trust proxy", 1);
 app.use(compression({ level: 6, threshold: 1024 }));
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
