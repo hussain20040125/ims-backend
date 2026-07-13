@@ -23,22 +23,6 @@ class AuthController {
       res.status(401).json({ success: false, message: error.message });
     }
   }
-  // ── POST /api/auth/verify-login-otp  →  verify OTP, issue JWT ───────────
-  static async verifyLoginOtp(req, res) {
-    try {
-      const { email, otp } = req.body;
-      const result = await AuthService.verifyLoginOtp(email, otp);
-      res.cookie("token", result.token, {
-        httpOnly: true,
-        secure: IS_PROD,
-        sameSite: "none",
-        maxAge: 24 * 60 * 60 * 1e3
-      });
-      res.json({ success: true, data: result });
-    } catch (error) {
-      res.status(401).json({ success: false, message: error.message });
-    }
-  }
   // ── POST /api/auth/logout ─────────────────────────────────────────────────
   static async logout(req, res) {
     if (req.user) logAudit(req.user, "LOGOUT", "Auth", req.user._id.toString(), { action: "User Logout" });
