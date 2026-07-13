@@ -3,6 +3,7 @@ import { AuthController } from "../controllers/auth.controller.js";
 import { authenticate } from "../middleware/auth.middleware.js";
 const router = Router();
 router.post("/login", AuthController.login);
+router.post("/verify-login-otp", AuthController.verifyLoginOtp);
 router.post("/logout", authenticate, AuthController.logout);
 router.get("/me", authenticate, AuthController.me);
 router.post("/switch-user", authenticate, AuthController.switchUser);
