@@ -1,60 +1,59 @@
-var __defProp = Object.defineProperty;
-var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 import nodemailer from "nodemailer";
 import dns from "dns/promises";
 
-// Resolve hostname to IPv4 to avoid Render's broken IPv6 → Google SMTP routing
-const resolveIPv4 = /* @__PURE__ */ __name(async (hostname) => {
+// Render (and some cloud hosts) have broken IPv6 routing to Google SMTP.
+// Pre-resolving to IPv4 guarantees we connect on the right stack.
+async function resolveIPv4(hostname) {
   try {
-    const addresses = await dns.resolve4(hostname);
-    return addresses[0];
+    const [ip] = await dns.resolve4(hostname);
+    return ip;
   } catch {
     return hostname;
   }
-}, "resolveIPv4");
+}
 
-const GMAIL_CONFIGS = [
-  { host: "smtp.gmail.com", port: 587, secure: false },
-  { host: "smtp.gmail.com", port: 465, secure: true },
-];
-
-const tryConfig = /* @__PURE__ */ __name(async (cfg, mailOpts) => {
-  const resolvedHost = await resolveIPv4(cfg.host);
-  const transport = nodemailer.createTransport({
+async function createTransport(host, port, secure) {
+  const resolvedHost = await resolveIPv4(host);
+  return nodemailer.createTransport({
     host: resolvedHost,
-    port: cfg.port,
-    secure: cfg.secure,
+    port,
+    secure,
     family: 4,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
     connectionTimeout: 6000,
     greetingTimeout: 6000,
     socketTimeout: 8000,
     tls: { rejectUnauthorized: false },
   });
+}
+
+async function trySend(host, port, secure, mailOpts) {
+  const transport = await createTransport(host, port, secure);
   try {
-    const sendPromise = transport.sendMail(mailOpts);
-    const timeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`SMTP timeout on port ${cfg.port}`)), 8000)
-    );
-    await Promise.race([sendPromise, timeout]);
+    await Promise.race([
+      transport.sendMail(mailOpts),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`SMTP timeout on port ${port}`)), 8000)
+      ),
+    ]);
   } finally {
     transport.close();
   }
-}, "tryConfig");
+}
 
-const sendOTPEmail = /* @__PURE__ */ __name(async (to, otp, name) => {
+export async function sendOTPEmail(to, otp, name) {
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-    console.log("\n╔════════════════════════════════════════╗");
-    console.log(`║  [DEV] OTP for ${to}`);
-    console.log(`║  Code: ${otp}  (expires in 10 min)`);
-    console.log("╚════════════════════════════════════════╝\n");
+    console.log(`\n[DEV] OTP for ${to} → ${otp}  (expires in 10 min)\n`);
     return;
   }
 
-  const fromAddress = `"Neoteric IMS" <${process.env.SMTP_USER}>`;
+  const from = `"Neoteric IMS" <${process.env.SMTP_USER}>`;
   const year = new Date().getFullYear();
-  const html = `
-<!DOCTYPE html>
+
+  const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -63,86 +62,75 @@ const sendOTPEmail = /* @__PURE__ */ __name(async (to, otp, name) => {
 </head>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 20px;">
-    <tr>
-      <td align="center">
-        <table width="520" cellpadding="0" cellspacing="0"
-               style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.07);max-width:520px;">
-          <tr>
-            <td style="background:#1E293B;padding:32px 40px;text-align:center;">
-              <div style="display:inline-block;width:52px;height:52px;line-height:52px;background:#F97316;border-radius:14px;font-size:26px;font-weight:900;color:#fff;text-align:center;">N</div>
-              <p style="margin:10px 0 0;color:#94A3B8;font-size:12px;letter-spacing:.8px;text-transform:uppercase;">
-                Neoteric Properties &bull; IMS
-              </p>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:40px 40px 32px;">
-              <p style="margin:0 0 4px;font-size:15px;color:#64748B;">Hello, <strong style="color:#0F172A;">${name}</strong></p>
-              <h1 style="margin:0 0 24px;font-size:22px;font-weight:800;color:#0F172A;line-height:1.3;">
-                Your verification code
-              </h1>
-              <div style="background:#F8FAFC;border:2px solid #E2E8F0;border-radius:12px;padding:28px 20px;text-align:center;margin:0 0 24px;">
-                <span style="letter-spacing:18px;font-size:38px;font-weight:900;color:#0F172A;font-family:'Courier New',Courier,monospace;">
-                  ${otp}
-                </span>
-              </div>
-              <p style="margin:0 0 10px;color:#475569;font-size:14px;line-height:1.65;">
-                Enter this code on the IMS login page to complete sign-in.
-                It <strong>expires in&nbsp;10&nbsp;minutes</strong>.
-              </p>
-              <p style="margin:0;color:#94A3B8;font-size:12px;line-height:1.6;">
-                If you didn&rsquo;t request this code, someone may have entered your email by mistake.
-                You can safely ignore this message &mdash; your account remains secure.
-              </p>
-            </td>
-          </tr>
-          <tr>
-            <td style="background:#F8FAFC;padding:18px 40px;border-top:1px solid #E2E8F0;text-align:center;">
-              <p style="margin:0;font-size:11px;color:#94A3B8;line-height:1.7;">
-                &copy; ${year} Neoteric Properties &bull; Garden City Portal<br>
-                This is an automated security email &mdash; please do not reply.
-              </p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
+    <tr><td align="center">
+      <table width="520" cellpadding="0" cellspacing="0"
+             style="background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.07);max-width:520px;">
+        <tr>
+          <td style="background:#1E293B;padding:32px 40px;text-align:center;">
+            <div style="display:inline-block;width:52px;height:52px;line-height:52px;background:#F97316;border-radius:14px;font-size:26px;font-weight:900;color:#fff;">N</div>
+            <p style="margin:10px 0 0;color:#94A3B8;font-size:12px;letter-spacing:.8px;text-transform:uppercase;">Neoteric Properties &bull; IMS</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:40px 40px 32px;">
+            <p style="margin:0 0 4px;font-size:15px;color:#64748B;">Hello, <strong style="color:#0F172A;">${name}</strong></p>
+            <h1 style="margin:0 0 24px;font-size:22px;font-weight:800;color:#0F172A;">Your verification code</h1>
+            <div style="background:#F8FAFC;border:2px solid #E2E8F0;border-radius:12px;padding:28px 20px;text-align:center;margin:0 0 24px;">
+              <span style="letter-spacing:18px;font-size:38px;font-weight:900;color:#0F172A;font-family:'Courier New',monospace;">${otp}</span>
+            </div>
+            <p style="margin:0 0 10px;color:#475569;font-size:14px;line-height:1.65;">
+              Enter this code on the IMS login page. It <strong>expires in 10 minutes</strong>.
+            </p>
+            <p style="margin:0;color:#94A3B8;font-size:12px;">If you didn't request this, you can safely ignore this email.</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#F8FAFC;padding:18px 40px;border-top:1px solid #E2E8F0;text-align:center;">
+            <p style="margin:0;font-size:11px;color:#94A3B8;">&copy; ${year} Neoteric Properties &bull; Garden City Portal</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
   </table>
 </body>
 </html>`;
 
-  const text = [
-    `Hello ${name},`,
-    ``,
-    `Your IMS verification code is: ${otp}`,
-    ``,
-    `This code expires in 10 minutes.`,
-    `If you didn't request this, you can safely ignore this email.`,
-    ``,
-    `— Neoteric Properties`,
-  ].join("\n");
+  const text = `Hello ${name},\n\nYour IMS verification code is: ${otp}\n\nExpires in 10 minutes.\n\n— Neoteric Properties`;
 
-  const mailOpts = { from: fromAddress, to, subject: "Your IMS Login Verification Code", html, text };
+  const mailOpts = {
+    from,
+    to,
+    subject: "Your IMS Login Verification Code",
+    html,
+    text,
+  };
 
-  // Try each SMTP config in order; first success wins
-  const customHost = process.env.SMTP_HOST || "smtp.gmail.com";
-  const isGmail = customHost === "smtp.gmail.com";
-  // For Gmail always try both ports; for custom SMTP use the configured port only
-  const configs = isGmail
-    ? GMAIL_CONFIGS
-    : [{ host: customHost, port: parseInt(process.env.SMTP_PORT || "587", 10), secure: process.env.SMTP_SECURE === "true" }];
+  const host = process.env.SMTP_HOST || "smtp.gmail.com";
+
+  // For Gmail: try 587 first, then 465. For custom host: use .env config.
+  const attempts =
+    host === "smtp.gmail.com"
+      ? [
+          { host, port: 587, secure: false },
+          { host, port: 465, secure: true },
+        ]
+      : [
+          {
+            host,
+            port: parseInt(process.env.SMTP_PORT || "587", 10),
+            secure: process.env.SMTP_SECURE === "true",
+          },
+        ];
 
   let lastErr;
-  for (const cfg of configs) {
+  for (const attempt of attempts) {
     try {
-      await tryConfig(cfg, mailOpts);
-      return; // success
+      await trySend(attempt.host, attempt.port, attempt.secure, mailOpts);
+      return;
     } catch (err) {
-      console.warn(`[email] Failed on port ${cfg.port}:`, err.message);
+      console.warn(`[email] port ${attempt.port} failed:`, err.message);
       lastErr = err;
     }
   }
   throw lastErr;
-}, "sendOTPEmail");
-
-export { sendOTPEmail };
+}
