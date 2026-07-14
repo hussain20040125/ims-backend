@@ -29,18 +29,41 @@ const INWARD_TYPES = [
   "Outward Return",
   "Public Outward Return"
 ];
-const updatePublicStock = /* @__PURE__ */ __name(async (type, sku, itemName, qty, unit, category) => {
+const updatePublicStock = /* @__PURE__ */ __name(async (type, sku, itemName, qty, unit, category, store) => {
   const isPositive = INWARD_TYPES.includes(type);
   const inv = await Inventory.findOne({ sku });
   if (inv) {
+    if (!inv.locationStock) inv.locationStock = new Map();
+    if (!inv.sites) inv.sites = [];
     if (isPositive) {
-      inv.totalQty = (inv.totalQty || 0) + qty;
-      inv.availableQty = (inv.availableQty || 0) + qty;
+      if (store) {
+        const curr = inv.locationStock.has(store) ? Number(inv.locationStock.get(store)) : (inv.sites.find(s => s.siteName === store)?.liveStock || 0);
+        const newQty = curr + qty;
+        inv.locationStock.set(store, newQty);
+        inv.markModified("locationStock");
+        const siteEntry = inv.sites.find(s => s.siteName === store);
+        if (siteEntry) { siteEntry.liveStock = newQty; } else { inv.sites.push({ siteName: store, siteCode: "", openingStock: 0, liveStock: newQty }); }
+        inv.markModified("sites");
+      } else {
+        inv.totalQty = (inv.totalQty || 0) + qty;
+        inv.availableQty = (inv.availableQty || 0) + qty;
+        inv.liveStock = (inv.availableQty || 0) + (inv.allocatedQty || 0);
+      }
     } else {
-      inv.totalQty = Math.max(0, (inv.totalQty || 0) - qty);
-      inv.availableQty = Math.max(0, (inv.availableQty || 0) - qty);
+      if (store) {
+        const curr = inv.locationStock.has(store) ? Number(inv.locationStock.get(store)) : (inv.sites.find(s => s.siteName === store)?.liveStock || 0);
+        const newQty = Math.max(0, curr - qty);
+        inv.locationStock.set(store, newQty);
+        inv.markModified("locationStock");
+        const siteEntry = inv.sites.find(s => s.siteName === store);
+        if (siteEntry) { siteEntry.liveStock = newQty; } else { inv.sites.push({ siteName: store, siteCode: "", openingStock: 0, liveStock: newQty }); }
+        inv.markModified("sites");
+      } else {
+        inv.totalQty = Math.max(0, (inv.totalQty || 0) - qty);
+        inv.availableQty = Math.max(0, (inv.availableQty || 0) - qty);
+        inv.liveStock = (inv.availableQty || 0) + (inv.allocatedQty || 0);
+      }
     }
-    inv.liveStock = (inv.availableQty || 0) + (inv.allocatedQty || 0);
     await inv.save();
   } else if (isPositive) {
     await Inventory.create({
@@ -55,7 +78,9 @@ const updatePublicStock = /* @__PURE__ */ __name(async (type, sku, itemName, qty
       allocatedQty: 0,
       issuedQty: 0,
       liveStock: qty,
-      condition: "New"
+      condition: "New",
+      locationStock: store ? { [store]: qty } : {},
+      sites: store ? [{ siteName: store, siteCode: "", openingStock: 0, liveStock: qty }] : [],
     });
   }
 }, "updatePublicStock");
@@ -273,7 +298,7 @@ router.post("/inward", async (req, res) => {
     const data = { ...body, id, type };
     const inward = await Inward.create(data);
     for (const item of body.items) {
-      await updatePublicStock(type, item.sku, item.itemName, item.qty, item.unit);
+      await updatePublicStock(type, item.sku, item.itemName, item.qty, item.unit, null, body.store);
     }
     await Transaction.create({ ...data });
     broadcast({ type: "DATA_UPDATED", path: "inward" });
@@ -304,7 +329,7 @@ router.post("/outward", async (req, res) => {
     const data = { ...body, id, type };
     const outward = await Outward.create(data);
     for (const item of body.items) {
-      await updatePublicStock(type, item.sku, item.itemName, item.qty, item.unit);
+      await updatePublicStock(type, item.sku, item.itemName, item.qty, item.unit, null, body.store);
     }
     await Transaction.create({ ...data });
     broadcast({ type: "DATA_UPDATED", path: "outward" });
@@ -334,7 +359,7 @@ router.post("/inward-returns", async (req, res) => {
     const data = { ...body, id, type: "Public Inward Return", vendor: body.supplier || body.vendor };
     const inwardReturn = await InwardReturn.create(data);
     for (const item of body.items) {
-      await updatePublicStock("Public Inward Return", item.sku, item.itemName, item.qty, item.unit);
+      await updatePublicStock("Public Inward Return", item.sku, item.itemName, item.qty, item.unit, null, body.store);
     }
     await Transaction.create({ ...data, type: "Public Inward Return" });
     broadcast({ type: "DATA_UPDATED", path: "inward-returns" });
@@ -364,7 +389,7 @@ router.post("/outward-returns", async (req, res) => {
     const data = { ...body, id, type: "Public Outward Return" };
     const outwardReturn = await OutwardReturn.create(data);
     for (const item of body.items) {
-      await updatePublicStock("Public Outward Return", item.sku, item.itemName, item.qty, item.unit);
+      await updatePublicStock("Public Outward Return", item.sku, item.itemName, item.qty, item.unit, null, body.store);
     }
     await Transaction.create({ ...data, type: "Public Outward Return" });
     broadcast({ type: "DATA_UPDATED", path: "outward-returns" });
