@@ -510,6 +510,18 @@ router.put("/outward/:id", authenticate, async (req, res) => {
       }
     }
     const { _id: _oid, __v, ...updateData } = data;
+    const historyEntry = {
+      updatedBy: req.user?.name || "Unknown",
+      updatedAt: new Date().toISOString(),
+      changes: {
+        project: oldItem.project,
+        store: oldItem.store,
+        personName: oldItem.personName,
+        mrNo: oldItem.mrNo,
+        items: oldItem.items.map(i => ({ sku: i.sku, itemName: i.itemName, qty: i.qty, unit: i.unit })),
+      },
+    };
+    updateData.updateHistory = [...(oldItem.updateHistory || []), historyEntry];
     const item = await Outward.findOneAndUpdate({ id: req.params.id }, updateData, { returnDocument: 'after' });
     await Transaction.findOneAndUpdate({ id: req.params.id }, {
       ...updateData,

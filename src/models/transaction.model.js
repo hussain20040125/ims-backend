@@ -92,6 +92,11 @@ const OutwardSchema = new Schema({
   transferStatus:     { type: String, enum: ["Pending", "Fulfilled", "Partially Complete"], default: "Pending" },
   transferVariance:   { type: Number, default: 0 },
   extras:             { type: mongoose.Schema.Types.Mixed, default: {} },
+  updateHistory:      [{
+    updatedBy:  String,
+    updatedAt:  String,
+    changes:    { type: mongoose.Schema.Types.Mixed },
+  }],
 }, { timestamps: true });
 
 OutwardSchema.index({ project: 1 });
