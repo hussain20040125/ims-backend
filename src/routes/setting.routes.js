@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { Settings, Inventory, PurchaseOrder, WriteOff, Transaction } from "../models/index.js";
+import { Settings, Inventory, PurchaseOrder, WriteOff, Transaction, MaterialRequirement } from "../models/index.js";
 import { authenticate } from "../middleware/auth.middleware.js";
 import { broadcast } from "../utils/broadcaster.js";
 import { triggerN8nWebhook } from "../utils/webhook.js";
@@ -26,7 +26,8 @@ router.get("/stats", authenticate, async (req, res) => {
       categoriesCount,
       stockByCategory,
       todayInward,
-      todayOutward
+      todayOutward,
+      mrStatusCounts
     ] = await Promise.all([
       Inventory.countDocuments().lean(),
       Inventory.aggregate([{ $group: { _id: null, total: { $sum: { $ifNull: ["$totalQty", { $add: ["$liveStock", "$issuedQty"] }] } } } }]).then((res2) => res2[0]?.total || 0),
@@ -93,7 +94,10 @@ router.get("/stats", authenticate, async (req, res) => {
         },
         { $unwind: "$items" },
         { $group: { _id: null, total: { $sum: "$items.qty" } } }
-      ]).then((res2) => res2[0]?.total || 0)
+      ]).then((res2) => res2[0]?.total || 0),
+      MaterialRequirement.aggregate([
+        { $group: { _id: "$status", count: { $sum: 1 } } }
+      ]).then(rows => Object.fromEntries(rows.map(r => [r._id, r.count])))
     ]);
     const statsData = {
       totalSKUs,
@@ -109,7 +113,8 @@ router.get("/stats", authenticate, async (req, res) => {
       categoriesCount,
       stockByCategory,
       todayInward,
-      todayOutward
+      todayOutward,
+      mrStatusCounts
     };
     statsCache = { data: statsData, timestamp: now };
     res.json({
