@@ -31,6 +31,30 @@ const SettingsSchema = new Schema({
   stores:    { type: [String], default: [] },
   sites:     [{ siteName: String, siteCode: String }],
   gstRates:  { type: [String], default: ["0%", "5%", "12%", "18%", "28%"] },
+
+  // Procurement Task SLA Configuration
+  slaConfig: {
+    defaultSLA: {
+      value: { type: Number, default: 3 },
+      unit:  { type: String, default: "days" },
+    },
+    byPriority: {
+      urgent: { value: { type: Number, default: 1 }, unit: { type: String, default: "days" } },
+      normal: { value: { type: Number, default: 3 }, unit: { type: String, default: "days" } },
+      low:    { value: { type: Number, default: 7 }, unit: { type: String, default: "days" } },
+    },
+    defaultAssigneeId:   { type: String, default: "" },
+    defaultAssigneeName: { type: String, default: "" },
+    backupAssigneeId:    { type: String, default: "" },
+    backupAssigneeName:  { type: String, default: "" },
+    workingHours: {
+      start: { type: String, default: "09:00" },
+      end:   { type: String, default: "18:00" },
+    },
+    workingDays:      { type: [Number], default: [1, 2, 3, 4, 5, 6] },
+    warnBeforeHours:  { type: Number, default: 6 },
+    escalateToRole:   { type: String, default: "Super Admin" },
+  },
 }, { timestamps: true });
 
 export const Settings = mongoose.model("Settings", SettingsSchema);

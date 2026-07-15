@@ -55,6 +55,10 @@ const GRNSchema = new Schema({
 GRNSchema.index({ poId: 1 });
 GRNSchema.index({ project: 1 });
 GRNSchema.index({ supplier: 1 });
+GRNSchema.index({ status: 1 });
+GRNSchema.index({ mrNo: 1 });
+GRNSchema.index({ poId: 1, status: 1 });
+GRNSchema.index({ createdAt: -1 });
 GRNSchema.index({ updatedAt: -1 });
 
 export const GRN = mongoose.model("GRN", GRNSchema);

@@ -312,33 +312,27 @@ router.post("/outward", authenticate, async (req, res) => {
     }
     // All validations passed — now create documents and apply stock changes
     const outward = await Outward.create([data]);
-    for (const item of body.items) {
-      if (body.mrId) {
+    if (body.mrId) {
+      // Fetch MR once for all items so the final allClosed check sees ALL updates
+      const mr = await MaterialRequirement.findOne({ id: body.mrId });
+      if (!mr) throw new Error(`Material Requirement ${body.mrId} not found`);
+      for (const item of body.items) {
         let allocation = await MRAllocation.findOne({ mrId: body.mrId, sku: item.sku });
-        const mr = await MaterialRequirement.findOne({ id: body.mrId });
         const mrItem = mr.items.find((i) => i.sku === item.sku);
         let fromAllocation = 0;
-        let fromAvailable = 0;
         if (allocation && allocation.remainingQty > 0) {
           fromAllocation = Math.min(item.qty, allocation.remainingQty);
-          fromAvailable = item.qty - fromAllocation;
-        } else {
-          fromAvailable = item.qty;
         }
         if (allocation) {
           allocation.issuedQty = (allocation.issuedQty || 0) + fromAllocation;
           allocation.remainingQty = (allocation.remainingQty || 0) - fromAllocation;
-          if (allocation.remainingQty === 0) allocation.status = "Closed";
-          else allocation.status = "Partially Issued";
+          allocation.status = allocation.remainingQty === 0 ? "Closed" : "Partially Issued";
           await allocation.save({});
         }
-        mrItem.issuedQty = (mrItem.issuedQty || 0) + item.qty;
-        if (mrItem.issuedQty >= mrItem.qty) mrItem.status = "Issued";
-        else mrItem.status = "Partial";
-        const allItems = mr.items || [];
-        const allClosed = allItems.length > 0 && allItems.every((i) => i.issuedQty >= i.qty);
-        mr.status = allClosed ? "Closed" : "Partially Issued";
-        await mr.save({});
+        if (mrItem) {
+          mrItem.issuedQty = (mrItem.issuedQty || 0) + item.qty;
+          mrItem.status = mrItem.issuedQty >= mrItem.qty ? "Issued" : "Partial";
+        }
         const inv = await Inventory.findOne({ sku: item.sku });
         inv.liveStock = Math.max(0, (inv.liveStock || 0) - item.qty);
         inv.allocatedQty = Math.max(0, (inv.allocatedQty || 0) - fromAllocation);
@@ -347,7 +341,18 @@ router.post("/outward", authenticate, async (req, res) => {
           applyStoreDelta(inv, body.store, Math.max(0, getSiteStock(inv, body.store) - item.qty));
         }
         await inv.save({});
-      } else {
+      }
+      // After ALL items updated in memory, do ONE final status check and save
+      const allFulfilled = mr.items.length > 0 && mr.items.every((i) => (i.issuedQty || 0) >= i.qty);
+      const someIssued = mr.items.some((i) => (i.issuedQty || 0) > 0);
+      if (allFulfilled) {
+        mr.status = "Fulfilled";
+      } else if (someIssued) {
+        mr.status = "Partially Issued";
+      }
+      await mr.save({});
+    } else {
+      for (const item of body.items) {
         await updateStock(
           data.type === "Transfer" ? "Transfer Outward" : "Outward",
           item.sku,
@@ -427,10 +432,10 @@ router.put("/outward/:id", authenticate, async (req, res) => {
             const someIssued = mr.items.some((mi) => (mi.issuedQty || 0) > 0);
             const allAllocated = mr.items.every((mi) => (mi.issuedQty || 0) + (mi.allocatedQty || 0) >= mi.qty);
             const someAllocated = mr.items.some((mi) => (mi.issuedQty || 0) + (mi.allocatedQty || 0) > 0);
-            if (allIssued) mr.status = "Closed";
+            if (allIssued) mr.status = "Fulfilled";
             else if (someIssued) mr.status = "Partially Issued";
             else if (allAllocated) mr.status = "Allocated";
-            else if (someAllocated) mr.status = "Store Pending";
+            else if (someAllocated) mr.status = "Partially Allocated";
             else mr.status = "Approved";
             await mr.save({});
           }
@@ -481,8 +486,8 @@ router.put("/outward/:id", authenticate, async (req, res) => {
         }
         mrItem.issuedQty = (mrItem.issuedQty || 0) + it.qty;
         mrItem.status = mrItem.issuedQty >= mrItem.qty ? "Issued" : "Partial";
-        const allClosed = mr.items.every((i) => (i.issuedQty || 0) >= i.qty);
-        mr.status = allClosed ? "Closed" : "Partially Issued";
+        const allFulfilled = mr.items.every((i) => (i.issuedQty || 0) >= i.qty);
+        mr.status = allFulfilled ? "Fulfilled" : "Partially Issued";
         await mr.save({});
         inv.liveStock = Math.max(0, (inv.liveStock || 0) - it.qty);
         inv.allocatedQty = Math.max(0, (inv.allocatedQty || 0) - fromAllocation);
@@ -580,10 +585,10 @@ router.delete("/outward/:id", authenticate, async (req, res) => {
               const someIssued = mr.items.some((mi) => (mi.issuedQty || 0) > 0);
               const allAllocated = mr.items.every((mi) => (mi.issuedQty || 0) + (mi.allocatedQty || 0) >= mi.qty);
               const someAllocated = mr.items.some((mi) => (mi.issuedQty || 0) + (mi.allocatedQty || 0) > 0);
-              if (allIssued) mr.status = "Closed";
+              if (allIssued) mr.status = "Fulfilled";
               else if (someIssued) mr.status = "Partially Issued";
               else if (allAllocated) mr.status = "Allocated";
-              else if (someAllocated) mr.status = "Store Pending";
+              else if (someAllocated) mr.status = "Partially Allocated";
               else mr.status = "Approved";
               await mr.save({});
             }
@@ -664,7 +669,12 @@ router.post("/inward-returns", authenticate, async (req, res) => {
     for (const it of data.items) {
       const invCheck = await Inventory.findOne({ sku: it.sku });
       if (!invCheck) throw new Error(`Item not found in inventory: ${it.sku}`);
-      if ((invCheck.availableQty || 0) < it.qty) throw new Error(`Insufficient stock to return for ${it.itemName}. Available: ${invCheck.availableQty || 0}, Requested: ${it.qty}`);
+      if (data.store) {
+        const siteStock = getSiteStock(invCheck, data.store);
+        if (siteStock < it.qty) throw new Error(`Insufficient stock at ${data.store} for ${it.itemName}. Available: ${siteStock}, Requested: ${it.qty}`);
+      } else {
+        if ((invCheck.availableQty || 0) < it.qty) throw new Error(`Insufficient stock to return for ${it.itemName}. Available: ${invCheck.availableQty || 0}, Requested: ${it.qty}`);
+      }
     }
     const item = await InwardReturn.create([data]);
     for (const it of data.items) {
@@ -849,6 +859,111 @@ router.use("/inward-returns", inwardReturnCrudRouter);
 const outwardReturnCrudRouter = Router();
 createCrudRoutes(outwardReturnCrudRouter, OutwardReturn, "outward-returns", "id", void 0, "OUTWARD_RETURN");
 router.use("/outward-returns", outwardReturnCrudRouter);
+// Custom DELETE for MRAllocation — reverses inventory + MR item allocatedQty
+router.delete("/mr-allocations/:id", authenticate, async (req, res) => {
+  try {
+    const alc = await MRAllocation.findOne({ id: req.params.id });
+    if (!alc) return res.status(404).json({ success: false, message: "Allocation not found" });
+    if ((alc.issuedQty || 0) > 0) {
+      return res.status(400).json({ success: false, message: `Cannot delete: ${alc.issuedQty} unit(s) already issued. Delete the outward transaction first.` });
+    }
+    const reverseQty = alc.remainingQty || alc.allocatedQty || 0;
+    // Reverse inventory
+    const inv = await Inventory.findOne({ sku: alc.sku });
+    if (inv) {
+      inv.allocatedQty = Math.max(0, (inv.allocatedQty || 0) - reverseQty);
+      inv.availableQty = Math.max(0, (inv.liveStock || 0) - inv.allocatedQty);
+      await inv.save({});
+    }
+    // Reverse MR item
+    const mr = await MaterialRequirement.findOne({ id: alc.mrId });
+    if (mr) {
+      const mrItem = mr.items.find(i => i.sku === alc.sku);
+      if (mrItem) {
+        mrItem.allocatedQty = Math.max(0, (mrItem.allocatedQty || 0) - reverseQty);
+        const totalFulfilled = (mrItem.issuedQty || 0) + (mrItem.allocatedQty || 0);
+        if ((mrItem.issuedQty || 0) >= mrItem.qty) mrItem.status = "Issued";
+        else if (totalFulfilled >= mrItem.qty) mrItem.status = "Allocated";
+        else if (totalFulfilled > 0) mrItem.status = "Partial";
+        else mrItem.status = "Needs Purchase";
+      }
+      const allAllocated = mr.items.every(i => i.status === "Allocated" || i.status === "Issued");
+      const someAllocated = mr.items.some(i => (i.allocatedQty || 0) > 0);
+      const someIssued = mr.items.some(i => (i.issuedQty || 0) > 0);
+      if (someIssued) mr.status = "Partially Issued";
+      else if (allAllocated) mr.status = "Allocated";
+      else if (someAllocated) mr.status = "Partially Allocated";
+      else mr.status = mr.status === "Fulfilled" || mr.status === "Partially Issued" ? "Approved by Store" : mr.status;
+      await mr.save({});
+    }
+    await MRAllocation.findOneAndDelete({ id: req.params.id });
+    broadcast({ type: "DATA_UPDATED", path: "mr-allocations" });
+    broadcast({ type: "DATA_UPDATED", path: "inventory" });
+    broadcast({ type: "DATA_UPDATED", path: "material-requirements" });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+// Custom PUT for MRAllocation — adjust allocated qty
+router.put("/mr-allocations/:id", authenticate, async (req, res) => {
+  try {
+    const alc = await MRAllocation.findOne({ id: req.params.id });
+    if (!alc) return res.status(404).json({ success: false, message: "Allocation not found" });
+    const { allocatedQty } = req.body;
+    if (allocatedQty === undefined) return res.status(400).json({ success: false, message: "allocatedQty is required" });
+    const newQty = Number(allocatedQty);
+    const issuedQty = alc.issuedQty || 0;
+    if (newQty < issuedQty) {
+      return res.status(400).json({ success: false, message: `Cannot reduce below already issued qty (${issuedQty})` });
+    }
+    const oldRemaining = alc.remainingQty || 0;
+    const newRemaining = newQty - issuedQty;
+    const delta = newRemaining - oldRemaining; // positive = need more from inventory, negative = return to inventory
+    // Adjust inventory
+    const inv = await Inventory.findOne({ sku: alc.sku });
+    if (inv) {
+      if (delta > 0) {
+        const available = Math.max(0, (inv.liveStock || 0) - (inv.allocatedQty || 0));
+        if (available < delta) return res.status(400).json({ success: false, message: `Insufficient stock. Available: ${available}, Need: ${delta}` });
+      }
+      inv.allocatedQty = Math.max(0, (inv.allocatedQty || 0) + delta);
+      inv.availableQty = Math.max(0, (inv.liveStock || 0) - inv.allocatedQty);
+      await inv.save({});
+    }
+    // Update MR item
+    const mr = await MaterialRequirement.findOne({ id: alc.mrId });
+    if (mr) {
+      const mrItem = mr.items.find(i => i.sku === alc.sku);
+      if (mrItem) {
+        mrItem.allocatedQty = Math.max(0, (mrItem.allocatedQty || 0) + delta);
+        const totalFulfilled = (mrItem.issuedQty || 0) + (mrItem.allocatedQty || 0);
+        if ((mrItem.issuedQty || 0) >= mrItem.qty) mrItem.status = "Issued";
+        else if (totalFulfilled >= mrItem.qty) mrItem.status = "Allocated";
+        else if (totalFulfilled > 0) mrItem.status = "Partial";
+        else mrItem.status = "Needs Purchase";
+      }
+      const allAllocated = mr.items.every(i => i.status === "Allocated" || i.status === "Issued");
+      const someAllocated = mr.items.some(i => (i.allocatedQty || 0) > 0);
+      const someIssued = mr.items.some(i => (i.issuedQty || 0) > 0);
+      if (someIssued) mr.status = "Partially Issued";
+      else if (allAllocated) mr.status = "Allocated";
+      else if (someAllocated) mr.status = "Partially Allocated";
+      await mr.save({});
+    }
+    // Update allocation record
+    alc.allocatedQty = newQty;
+    alc.remainingQty = newRemaining;
+    alc.status = newRemaining === 0 ? "Closed" : issuedQty > 0 ? "Partially Issued" : "Allocated";
+    await alc.save({});
+    broadcast({ type: "DATA_UPDATED", path: "mr-allocations" });
+    broadcast({ type: "DATA_UPDATED", path: "inventory" });
+    broadcast({ type: "DATA_UPDATED", path: "material-requirements" });
+    res.json({ success: true, data: alc });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
 const mrAllocationsCrudRouter = Router();
 createCrudRoutes(mrAllocationsCrudRouter, MRAllocation, "mr-allocations", "id", void 0, "MR_ALLOCATION");
 router.use("/mr-allocations", mrAllocationsCrudRouter);
@@ -1005,7 +1120,7 @@ router.delete("/transactions/:id", authenticate, async (req, res) => {
             const someIssued = mr.items.some((mi) => (mi.issuedQty || 0) > 0);
             const allAllocated = mr.items.every((mi) => (mi.issuedQty || 0) + (mi.allocatedQty || 0) >= mi.qty);
             const someAllocated = mr.items.some((mi) => (mi.issuedQty || 0) + (mi.allocatedQty || 0) > 0);
-            if (allIssued) mr.status = "Closed";
+            if (allIssued) mr.status = "Fulfilled";
             else if (someIssued) mr.status = "Partially Issued";
             else if (allAllocated) mr.status = "Allocated";
             else if (someAllocated) mr.status = "Store Pending";

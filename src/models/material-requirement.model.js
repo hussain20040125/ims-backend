@@ -27,7 +27,7 @@ const MaterialRequirementSchema = new Schema({
   requirementDate: String,
   date:          { type: String, required: true },
   items:         { type: [MaterialRequirementItemSchema], required: true },
-  status:        { type: String, enum: ["Draft","Pending","Rejected","Allocated","Partially Allocated","Partially Issued","Closed","Approved by Store","Approved by AGM","Store Pending","Quotation Phase","PO Created"], default: "Store Pending" },
+  status:        { type: String, enum: ["Draft","Pending","Rejected","Allocated","Partially Allocated","Partially Issued","Closed","Fulfilled","Approved by Store","Approved by AGM","Store Pending","Quotation Phase","PO Created"], default: "Store Pending" },
   approvedSupplier:    String,
   approvedQuotationId: String,
   approvals: [{
@@ -41,6 +41,9 @@ const MaterialRequirementSchema = new Schema({
 
 MaterialRequirementSchema.index({ project: 1 });
 MaterialRequirementSchema.index({ requesterName: 1 });
+MaterialRequirementSchema.index({ status: 1 });
+MaterialRequirementSchema.index({ status: 1, createdAt: -1 });
+MaterialRequirementSchema.index({ createdAt: -1 });
 MaterialRequirementSchema.index({ updatedAt: -1 });
 
 export const MaterialRequirement = mongoose.model("MaterialRequirement", MaterialRequirementSchema);

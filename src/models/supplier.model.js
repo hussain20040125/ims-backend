@@ -53,6 +53,9 @@ SupplierSchema.index({ email: 1 });
 SupplierSchema.index({ mobile: 1 });
 SupplierSchema.index({ contact: 1 });
 SupplierSchema.index({ phone: 1 });
+SupplierSchema.index({ status: 1 });
+SupplierSchema.index({ status: 1, companyName: 1 });
+SupplierSchema.index({ createdAt: -1 });
 SupplierSchema.index({ updatedAt: -1 });
 
 export const Supplier = mongoose.model("Supplier", SupplierSchema, "vendors");

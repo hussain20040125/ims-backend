@@ -58,7 +58,12 @@ const InwardSchema = new Schema({
 }, { timestamps: true, collection: "inwards" });
 
 InwardSchema.index({ project: 1 });
+InwardSchema.index({ type: 1 });
+InwardSchema.index({ gatePassNo: 1 });
+InwardSchema.index({ type: 1, gatePassNo: 1 });
+InwardSchema.index({ supplier: 1 });
 InwardSchema.index({ grnRef: 1 });
+InwardSchema.index({ createdAt: -1 });
 InwardSchema.index({ updatedAt: -1 });
 
 export const Inward = mongoose.model("Inward", InwardSchema);
@@ -100,6 +105,12 @@ const OutwardSchema = new Schema({
 }, { timestamps: true });
 
 OutwardSchema.index({ project: 1 });
+OutwardSchema.index({ type: 1 });
+OutwardSchema.index({ gatePassNo: 1 });
+OutwardSchema.index({ type: 1, gatePassNo: 1 });
+OutwardSchema.index({ supplier: 1 });
+OutwardSchema.index({ mrId: 1 });
+OutwardSchema.index({ createdAt: -1 });
 OutwardSchema.index({ updatedAt: -1 });
 
 export const Outward = mongoose.model("Outward", OutwardSchema);
@@ -172,6 +183,12 @@ const TransactionSchema = new Schema({
 TransactionSchema.index({ type: 1 });
 TransactionSchema.index({ date: -1 });
 TransactionSchema.index({ type: 1, date: -1 });
+TransactionSchema.index({ gatePassNo: 1 });
+TransactionSchema.index({ type: 1, gatePassNo: 1 });
+TransactionSchema.index({ project: 1 });
+TransactionSchema.index({ mrId: 1 });
+TransactionSchema.index({ poId: 1 });
+TransactionSchema.index({ createdAt: -1 });
 TransactionSchema.index({ updatedAt: -1 });
 
 export const Transaction = mongoose.model("Transaction", TransactionSchema);

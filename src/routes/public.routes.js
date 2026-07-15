@@ -272,15 +272,19 @@ router.get("/tracking/:id", async (req, res) => {
       return res.status(404).json({ success: false, message: "Document not found. Please check the ID." });
     }
     quotations = await Quotation.find({ mrId: mr.id }).lean();
-    if (!po) {
-      po = await PurchaseOrder.findOne({ mrId: mr.id }).lean();
-    }
-    if (po) {
-      grns = await Inventory.find({ poId: po.id, transactionType: "GRN" }).lean();
+    // Fetch ALL POs linked to this MR
+    const allPos = await PurchaseOrder.find({ mrId: mr.id }).sort({ createdAt: 1 }).lean();
+    // If searched by specific PO/GRN, ensure that PO is first
+    if (po && !allPos.find(p => p.id === po.id)) allPos.unshift(po);
+    if (!po) po = allPos[0] || null;
+    // Collect GRNs for all POs from GRN collection
+    const poIds = allPos.map(p => p.id).filter(Boolean);
+    if (poIds.length > 0) {
+      grns = await GRN.find({ poId: { $in: poIds } }).lean();
     } else {
-      grns = await Inventory.find({ mrNo: mr.id, transactionType: "GRN" }).lean();
+      grns = await GRN.find({ mrNo: mr.id }).lean();
     }
-    return res.json({ success: true, data: { mr, po, quotations, grns } });
+    return res.json({ success: true, data: { mr, po, pos: allPos, quotations, grns } });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -526,8 +530,9 @@ router.post("/supplier-registration", async (req, res) => {
         return res.status(400).json({ success: false, message: `A supplier named "${data.companyName}" already exists.` });
       }
     }
-    const seq = await getNextSequence("SUPPLIER");
-    const id = data.id || `VND_${String(seq).padStart(4, "0")}`;
+    const lastSupplier = await SupplierModel.findOne({ id: /^VND_\d+$/i }).sort({ id: -1 }).lean();
+    const maxNum = lastSupplier ? (parseInt((lastSupplier.id.match(/VND_(\d+)/i) || [])[1] || "0", 10)) : 0;
+    const id = `VND_${String(maxNum + 1).padStart(4, "0")}`;
     const supplier = await SupplierModel.create({
       ...data,
       id,

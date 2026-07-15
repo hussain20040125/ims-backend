@@ -234,52 +234,44 @@ class TransactionService {
         type: data.type || (data.mrId ? "MR-Outward" : "Manual")
       };
       const outward = await Outward.create([outwardData]);
-      for (const item of data.items) {
-        if (data.mrId) {
-          let allocation = await MRAllocation.findOne({
-            mrId: data.mrId,
-            sku: item.sku
-          });
-          const mr = await MaterialRequirement.findOne({ id: data.mrId });
-          if (!mr) throw new Error("Material Requirement not found");
+      if (data.mrId) {
+        // Fetch MR once for all items so the final allClosed check sees ALL updates
+        const mr = await MaterialRequirement.findOne({ id: data.mrId });
+        if (!mr) throw new Error("Material Requirement not found");
+        for (const item of data.items) {
+          let allocation = await MRAllocation.findOne({ mrId: data.mrId, sku: item.sku });
           const mrItem = mr.items.find((i) => i.sku === item.sku);
           if (!mrItem) throw new Error(`Item ${item.sku} not found in MR ${data.mrId}`);
-          const totalAfterThis = (mrItem.issuedQty || 0) + item.qty;
-          if (totalAfterThis > mrItem.qty) {
-            throw new Error(`Cannot issue ${item.qty} for ${item.itemName}. Total issued (${totalAfterThis}) would exceed requested quantity (${mrItem.qty}).`);
-          }
           const inv = await Inventory.findOne({ sku: item.sku });
           if (!inv) throw new Error(`Inventory item not found for ${item.sku}`);
           let fromAllocation = 0;
-          let fromAvailable = 0;
           if (allocation && allocation.remainingQty > 0) {
             fromAllocation = Math.min(item.qty, allocation.remainingQty);
-            fromAvailable = item.qty - fromAllocation;
-          } else {
-            fromAvailable = item.qty;
-          }
-          if (fromAvailable > 0 && inv.availableQty < fromAvailable) {
-            throw new Error(`Insufficient available stock for ${item.itemName}. Need ${fromAvailable} more, but only ${inv.availableQty} available.`);
           }
           if (allocation) {
             allocation.issuedQty = (allocation.issuedQty || 0) + fromAllocation;
             allocation.remainingQty = (allocation.remainingQty || 0) - fromAllocation;
-            if (allocation.remainingQty === 0) allocation.status = "Closed";
-            else allocation.status = "Partially Issued";
+            allocation.status = allocation.remainingQty === 0 ? "Closed" : "Partially Issued";
             await allocation.save({});
           }
           mrItem.issuedQty = (mrItem.issuedQty || 0) + item.qty;
-          if (mrItem.issuedQty >= mrItem.qty) mrItem.status = "Issued";
-          else mrItem.status = "Partial";
-          const allItems = mr.items || [];
-          const allClosed = allItems.length > 0 && allItems.every((i) => i.issuedQty >= i.qty);
-          mr.status = allClosed ? "Closed" : "Partially Issued";
-          await mr.save({});
+          mrItem.status = mrItem.issuedQty >= mrItem.qty ? "Issued" : "Partial";
           inv.liveStock = (inv.liveStock || 0) - item.qty;
           inv.allocatedQty = (inv.allocatedQty || 0) - fromAllocation;
           inv.issuedQty = (inv.issuedQty || 0) + item.qty;
           await inv.save({});
-        } else {
+        }
+        // After ALL items updated in memory, do ONE final status check and save
+        const allFulfilled = mr.items.length > 0 && mr.items.every((i) => (i.issuedQty || 0) >= i.qty);
+        const someIssued = mr.items.some((i) => (i.issuedQty || 0) > 0);
+        if (allFulfilled) {
+          mr.status = "Fulfilled";
+        } else if (someIssued) {
+          mr.status = "Partially Issued";
+        }
+        await mr.save({});
+      } else {
+        for (const item of data.items) {
           await this.updateStock(
             data.type === "Transfer" ? "Transfer Outward" : "Outward",
             item.sku,
@@ -350,7 +342,7 @@ class TransactionService {
             const someIssued = mr.items.some((mi) => (mi.issuedQty || 0) > 0);
             const allAllocated = mr.items.every((mi) => (mi.issuedQty || 0) + (mi.allocatedQty || 0) >= mi.qty);
             const someAllocated = mr.items.some((mi) => (mi.issuedQty || 0) + (mi.allocatedQty || 0) > 0);
-            if (allIssued) mr.status = "Closed";
+            if (allIssued) mr.status = "Fulfilled";
             else if (someIssued) mr.status = "Partially Issued";
             else if (allAllocated) mr.status = "Allocated";
             else if (someAllocated) mr.status = "Store Pending";

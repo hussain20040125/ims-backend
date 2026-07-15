@@ -46,6 +46,10 @@ InventorySchema.pre("save", async function () {
 
 InventorySchema.index({ itemName: 1 });
 InventorySchema.index({ category: 1 });
+InventorySchema.index({ subCategory: 1 });
+InventorySchema.index({ category: 1, subCategory: 1 });
+InventorySchema.index({ liveStock: -1 });
+InventorySchema.index({ createdAt: -1 });
 InventorySchema.index({ updatedAt: -1 });
 
 export const Inventory = mongoose.model("Inventory", InventorySchema);

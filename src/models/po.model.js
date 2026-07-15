@@ -127,6 +127,8 @@ POSchema.index({ supplier: 1 });
 POSchema.index({ status: 1 });
 POSchema.index({ mrId: 1 });
 POSchema.index({ mrId: 1, status: 1 });
+POSchema.index({ quotationId: 1 });
+POSchema.index({ createdAt: -1 });
 POSchema.index({ updatedAt: -1 });
 
 export const PurchaseOrder = mongoose.model("PurchaseOrder", POSchema);

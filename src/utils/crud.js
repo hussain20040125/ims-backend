@@ -123,6 +123,11 @@ const createCrudRoutes = /* @__PURE__ */ __name((router, model, resourceName, id
         data.id = `MR-${new Date().getFullYear()}-${seq}`;
         data.mrNumber = data.id;
       }
+      if (resourceName === "suppliers" && !data.id) {
+        const last = await model.findOne({ id: /^VND_\d+$/i }).sort({ id: -1 }).lean();
+        const maxNum = last ? (parseInt((last.id.match(/VND_(\d+)/i) || [])[1] || "0", 10)) : 0;
+        data.id = `VND_${String(maxNum + 1).padStart(4, "0")}`;
+      }
       if (data.condition && typeof data.condition === "string") {
         data.condition = data.condition.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
       }
