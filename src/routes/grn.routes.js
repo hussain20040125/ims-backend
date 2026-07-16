@@ -57,6 +57,7 @@ router.get("/", authenticate, async (req, res) => {
       query.$or = [
         { id: searchRegex },
         { poId: searchRegex },
+        { mrNo: searchRegex },
         { supplier: searchRegex },
         { vendor: searchRegex },
         { project: searchRegex },

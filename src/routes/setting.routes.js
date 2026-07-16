@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { Settings, Inventory, PurchaseOrder, WriteOff, Transaction, MaterialRequirement } from "../models/index.js";
+import { Settings, Inventory, PurchaseOrder, WriteOff, Transaction, MaterialRequirement, MRAllocation, Quotation } from "../models/index.js";
 import { authenticate } from "../middleware/auth.middleware.js";
 import { broadcast } from "../utils/broadcaster.js";
 import { triggerN8nWebhook } from "../utils/webhook.js";
@@ -27,7 +27,11 @@ router.get("/stats", authenticate, async (req, res) => {
       stockByCategory,
       todayInward,
       todayOutward,
-      mrStatusCounts
+      mrStatusCounts,
+      pendingQuotationCount,
+      allPendingPOCount,
+      grnPendingPOCount,
+      outwardPendingCount
     ] = await Promise.all([
       Inventory.countDocuments().lean(),
       Inventory.aggregate([{ $group: { _id: null, total: { $sum: { $ifNull: ["$totalQty", { $add: ["$liveStock", "$issuedQty"] }] } } } }]).then((res2) => res2[0]?.total || 0),
@@ -97,7 +101,11 @@ router.get("/stats", authenticate, async (req, res) => {
       ]).then((res2) => res2[0]?.total || 0),
       MaterialRequirement.aggregate([
         { $group: { _id: "$status", count: { $sum: 1 } } }
-      ]).then(rows => Object.fromEntries(rows.map(r => [r._id, r.count])))
+      ]).then(rows => Object.fromEntries(rows.map(r => [r._id, r.count]))),
+      Quotation.countDocuments({ status: "Pending" }).lean(),
+      PurchaseOrder.countDocuments({ status: { $in: ["Pending", "Pending L1", "Pending L2", "Pending L3"] } }).lean(),
+      PurchaseOrder.countDocuments({ status: { $in: ["GRN Pending", "GRN Variance"] } }).lean(),
+      MRAllocation.countDocuments({ $expr: { $lt: ["$issuedQty", "$allocatedQty"] } }).lean()
     ]);
     const statsData = {
       totalSKUs,
@@ -114,7 +122,11 @@ router.get("/stats", authenticate, async (req, res) => {
       stockByCategory,
       todayInward,
       todayOutward,
-      mrStatusCounts
+      mrStatusCounts,
+      pendingQuotationCount,
+      allPendingPOCount,
+      grnPendingPOCount,
+      outwardPendingCount
     };
     statsCache = { data: statsData, timestamp: now };
     res.json({
