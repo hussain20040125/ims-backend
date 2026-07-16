@@ -302,7 +302,8 @@ router.post("/inward", async (req, res) => {
     const data = { ...body, id, type };
     const inward = await Inward.create(data);
     for (const item of body.items) {
-      await updatePublicStock(type, item.sku, item.itemName, item.qty, item.unit, null, body.store);
+      const inwardStore = type.includes("Transfer") ? (body.destinationProject || body.store) : body.store;
+      await updatePublicStock(type, item.sku, item.itemName, item.qty, item.unit, null, inwardStore);
     }
     await Transaction.create({ ...data });
     broadcast({ type: "DATA_UPDATED", path: "inward" });
@@ -333,7 +334,8 @@ router.post("/outward", async (req, res) => {
     const data = { ...body, id, type };
     const outward = await Outward.create(data);
     for (const item of body.items) {
-      await updatePublicStock(type, item.sku, item.itemName, item.qty, item.unit, null, body.store);
+      const outwardStore = type.includes("Transfer") ? (body.project || body.store) : body.store;
+      await updatePublicStock(type, item.sku, item.itemName, item.qty, item.unit, null, outwardStore);
     }
     await Transaction.create({ ...data });
     broadcast({ type: "DATA_UPDATED", path: "outward" });
