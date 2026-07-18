@@ -259,6 +259,36 @@ router.post("/:id/reopen", authenticate, async (req, res) => {
     res.status(400).json({ success: false, message: error.message });
   }
 });
+router.post("/:id/hold", authenticate, async (req, res) => {
+  try {
+    const po = await PurchaseOrder.findOne({ id: req.params.id });
+    if (!po) return res.status(404).json({ success: false, message: "PO not found" });
+    if (po.status === "On Hold") return res.status(400).json({ success: false, message: "PO is already on hold" });
+    const prevStatus = po.status;
+    po.set({ status: "On Hold", previousStatus: prevStatus, holdReason: (req.body || {}).reason || "" });
+    await po.save({ validateModifiedOnly: true });
+    broadcast({ type: "DATA_UPDATED", path: "pos" });
+    res.json({ success: true, data: { id: po.id, status: "On Hold", previousStatus: prevStatus } });
+  } catch (error) {
+    logger.error("Hold PO error:", error);
+    res.status(400).json({ success: false, message: error.message || "Failed to hold PO" });
+  }
+});
+router.post("/:id/unhold", authenticate, async (req, res) => {
+  try {
+    const po = await PurchaseOrder.findOne({ id: req.params.id });
+    if (!po) return res.status(404).json({ success: false, message: "PO not found" });
+    if (po.status !== "On Hold") return res.status(400).json({ success: false, message: "PO is not on hold" });
+    const restoreStatus = po.previousStatus || "Pending L1";
+    po.set({ status: restoreStatus, previousStatus: undefined, holdReason: undefined });
+    await po.save({ validateModifiedOnly: true });
+    broadcast({ type: "DATA_UPDATED", path: "pos" });
+    res.json({ success: true, data: { id: po.id, status: restoreStatus } });
+  } catch (error) {
+    logger.error("Unhold PO error:", error);
+    res.status(400).json({ success: false, message: error.message || "Failed to lift hold" });
+  }
+});
 router.post("/:id/pdf-slack", authenticate, pdfUpload.single("pdf"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ success: false, message: "PDF file required" });
