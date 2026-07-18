@@ -68,11 +68,25 @@ const createCrudRoutes = /* @__PURE__ */ __name((router, model, resourceName, id
       if (search) {
         const keywords = search.trim().split(/\s+/).filter((k) => k.length > 0);
         if (keywords.length > 0) {
-          const schemaPaths = Object.keys(model.schema.paths);
-          const searchFields = schemaPaths.filter((p) => {
-            const instance = model.schema.paths[p].instance;
-            return instance === "String";
-          });
+          // Exclude URL/photo/image fields — they are never meaningful search targets
+          // and their long strings cause spurious matches and slow unindexed scans
+          const isMediaField = (name) => /url|photo|image|screenshot/i.test(name);
+          const searchFields = [];
+          for (const [pathName, schemaType] of Object.entries(model.schema.paths)) {
+            if (schemaType.instance === "String" && !isMediaField(pathName)) {
+              searchFields.push(pathName);
+            } else if (schemaType.instance === "Array") {
+              // Walk subdocument array schemas to include nested string fields (e.g. items.itemName)
+              const subSchema = schemaType.schema || schemaType.caster?.schema;
+              if (subSchema) {
+                for (const [subPath, subType] of Object.entries(subSchema.paths)) {
+                  if (subType.instance === "String" && !subPath.startsWith("_") && !isMediaField(subPath)) {
+                    searchFields.push(`${pathName}.${subPath}`);
+                  }
+                }
+              }
+            }
+          }
           if (searchFields.length > 0) {
             query.$and = keywords.map((kw) => {
               const searchRegex = new RegExp(kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
@@ -309,6 +323,9 @@ const createCrudRoutes = /* @__PURE__ */ __name((router, model, resourceName, id
         data.condition = data.condition.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
       }
       Object.assign(oldItem, data);
+      // Mark all updated fields as modified — required for Schema.Types.Mixed fields
+      // (arrays/objects) that Mongoose won't track automatically
+      Object.keys(data).forEach(key => oldItem.markModified(key));
       const item = await oldItem.save();
       broadcast({ type: "DATA_UPDATED", path: resourceName });
       const auditAction = item?.status !== oldItem?.status ? item.status?.includes("Approved") ? "APPROVE" : item.status?.includes("Reject") ? "REJECT" : "UPDATE" : "UPDATE";

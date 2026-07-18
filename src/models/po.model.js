@@ -104,6 +104,8 @@ const POSchema = new Schema({
     remarks:      String,
     vendorBankDetails: { accountHolder: String, bankName: String, accountNo: String, branchIFSC: String },
   },
+  paymentHistory: { type: [Schema.Types.Mixed], default: undefined },
+  totalPaid: { type: Number, default: 0 },
   auditTrail: [Schema.Types.Mixed],
   // Cancellation
   cancelNote:  String,

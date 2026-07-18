@@ -996,16 +996,28 @@ router.get("/transactions", authenticate, async (req, res) => {
       }
     }
     if (search) {
-      // C7: Properly escape regex to prevent ReDoS
       const searchRegex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       query.$or = [
         { id: searchRegex },
-        { date: searchRegex },
         { project: searchRegex },
+        { store: searchRegex },
         { supplier: searchRegex },
+        { vendor: searchRegex },
         { handoverTo: searchRegex },
+        { handoverFrom: searchRegex },
+        { personName: searchRegex },
+        { location: searchRegex },
+        { sourceSite: searchRegex },
+        { destinationProject: searchRegex },
+        { challanNo: searchRegex },
+        { mrNo: searchRegex },
+        { gatePassNo: searchRegex },
+        { type: searchRegex },
         { "items.itemName": searchRegex },
-        { "items.sku": searchRegex }
+        { "items.sku": searchRegex },
+        { "items.mrNo": searchRegex },
+        { "items.challanNo": searchRegex },
+        { "items.remarks": searchRegex }
       ];
     }
     if (filterStr) {

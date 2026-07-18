@@ -20,3 +20,4 @@ export { MaterialPlanRevision }   from "./material-plan-revision.model.js";
 export { Quotation }              from "./quotation.model.js";
 export { GSTRate }                from "./gstRate.model.js";
 export { FormConfig }             from "./FormConfig.js";
+export { AccountEntry }           from "./account.model.js";
