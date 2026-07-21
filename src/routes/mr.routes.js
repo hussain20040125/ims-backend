@@ -52,7 +52,7 @@ router.get("/", authenticate, async (req, res) => {
         allowedStatuses.add("Store Pending");
       }
       if (perms.includes("VIEW_MATERIAL_REQUIREMENT") || perms.includes("CREATE_MATERIAL_REQUIREMENT")) {
-        ["Approved by Store", "Approved by AGM", "Approved by Director", "Allocated", "Partially Allocated", "Partially Issued", "Closed", "Fulfilled", "Quotation Phase", "PO Created"].forEach((s) => allowedStatuses.add(s));
+        ["Quotation Phase", "Approved by AGM", "Approved by Director", "Allocated", "Partially Allocated", "Partially Issued", "Closed", "Fulfilled", "PO Created"].forEach((s) => allowedStatuses.add(s));
       }
       query.$or = [
         { status: { $in: Array.from(allowedStatuses) } },
@@ -132,7 +132,7 @@ router.delete("/:mrId/items/:sku/allocation", authenticate, async (req, res) => 
     if (someIssued) mr.status = "Partially Issued";
     else if (allAllocated) mr.status = "Allocated";
     else if (someAllocated) mr.status = "Partially Allocated";
-    else mr.status = "Approved by Store";
+    else mr.status = "Store Pending";
     await mr.save({});
     broadcast({ type: "DATA_UPDATED", path: "material-requirements" });
     broadcast({ type: "DATA_UPDATED", path: "inventory" });

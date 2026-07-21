@@ -26,7 +26,6 @@ router.put("/:id", authenticate, async (req, res) => {
         await MaterialRequirement.findOneAndUpdate(
           { id: quote.mrId },
           {
-            status: "Approved by AGM",
             approvedQuotationId: approvedQuotes[0].id,
             approvedSupplier: approvedQuotes[0].supplierName,
             approvals

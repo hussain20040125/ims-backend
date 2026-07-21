@@ -115,7 +115,7 @@ class MRController {
   static async queryPublic(req, res) {
     try {
       const unused = req.query.unused !== "false";
-      let query = { status: { $in: ["Approved by Store", "Approved by AGM", "Approved by Director", "Partially Issued"] } };
+      let query = { status: { $in: ["Quotation Phase", "Approved by AGM", "Approved by Director", "Partially Issued"] } };
       if (unused) {
         const linkedMrIds = await mongoose.model("PurchaseOrder").find({ mrId: { $nin: [null, ""] } }).distinct("mrId");
         query.id = { $nin: linkedMrIds };

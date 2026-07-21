@@ -269,7 +269,7 @@ const createCrudRoutes = /* @__PURE__ */ __name((router, model, resourceName, id
         }
         const editFields = ["items", "project", "location", "workType", "requesterName", "requirementDate"];
         const isEditingDetails = Object.keys(req.body).some((key) => editFields.includes(key));
-        if (isEditingDetails && req.body.status !== "Approved by Store") {
+        if (isEditingDetails && !["Quotation Phase", "Approved by AGM", "Approved by Director"].includes(req.body.status)) {
           req.body.status = "Store Pending";
         }
       }
@@ -380,9 +380,9 @@ const createCrudRoutes = /* @__PURE__ */ __name((router, model, resourceName, id
         if (resourceName === "material-requirements") {
           let nextPermission = "";
           let message = "";
-          if (item.status === "Approved by Store") {
+          if (item.status === "Quotation Phase") {
             nextPermission = "CREATE_PO";
-            message = `MR ${item.id} approved by Store. It is now ready for Procurement.`;
+            message = `MR ${item.id} approved by Store and moved to Quotation Phase.`;
           } else if (item.status === "Approved by AGM") {
             nextPermission = "CREATE_PO";
             message = `MR ${item.id} approved by AGM. It is now in Quotation/Procurement phase.`;
@@ -486,7 +486,9 @@ const createCrudRoutes = /* @__PURE__ */ __name((router, model, resourceName, id
         }
         await POService.cascadeDeletePO(req.params.id);
       } else if (resourceName === "suppliers") {
-        const poExists = await PurchaseOrder.findOne({ supplier: itemToDelete.companyName });
+        const poExists = await PurchaseOrder.findOne({
+          supplier: { $in: [itemToDelete.id, itemToDelete._id?.toString(), itemToDelete.companyName, itemToDelete.name].filter(Boolean) }
+        });
         if (poExists) {
           return res.status(400).json({
             success: false,
