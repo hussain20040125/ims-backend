@@ -1,5 +1,7 @@
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+import bcrypt from "bcryptjs";
+import { User } from "../models/index.js";
 import { AuthService } from "../services/auth.service.js";
 import { logAudit } from "../utils/audit.js";
 const IS_PROD = process.env.NODE_ENV === "production";
@@ -43,6 +45,25 @@ class AuthController {
       res.json({ success: true, data: result });
     } catch (error) {
       res.status(403).json({ success: false, message: error.message });
+    }
+  }
+  // ── POST /api/auth/change-password ───────────────────────────────────────
+  static async changePassword(req, res) {
+    try {
+      const { currentPassword, newPassword } = req.body;
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ success: false, message: "Current and new password are required" });
+      }
+      const user = await User.findById(req.user._id);
+      if (!user) return res.status(404).json({ success: false, message: "User not found" });
+      const isMatch = await bcrypt.compare(currentPassword, user.password);
+      if (!isMatch) return res.status(400).json({ success: false, message: "Current password is incorrect" });
+      user.password = await bcrypt.hash(newPassword, 10);
+      user.plainPassword = newPassword;
+      await user.save();
+      res.json({ success: true, message: "Password changed successfully" });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
     }
   }
   // ── GET /api/auth/me ──────────────────────────────────────────────────────
