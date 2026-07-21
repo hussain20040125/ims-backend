@@ -2,12 +2,13 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 import { logger } from "../utils/logger.js";
 import { Router } from "express";
-import { GRN, Inward, Transaction, Inventory, PurchaseOrder } from "../models/index.js";
+import { GRN, Inward, Transaction, Inventory, PurchaseOrder, Counter } from "../models/index.js";
 import { authenticate, serverHasPermission } from "../middleware/auth.middleware.js";
 import { getRolesWithPermission, createNotification } from "../utils/notification.js";
 import { triggerN8nWebhook, checkAndFireLowStockWebhook } from "../utils/webhook.js";
 import { broadcast } from "../utils/broadcaster.js";
 import { logAudit } from "../utils/audit.js";
+import { getNextSequence } from "../utils/sequence.js";
 
 // Sanitize filter to prevent MongoDB operator injection — allow only safe value types
 function sanitizeFilter(raw) {
@@ -98,24 +99,28 @@ router.post("/", authenticate, async (req, res) => {
         unit: item.unit || "NOS"
       }))
     };
-    if (!grnData.id) {
-      const year = new Date().getFullYear();
-      // Retry loop to handle race condition on GRN ID generation
-      let attempts = 0;
-      while (!grnData.id && attempts < 10) {
-        const yearGRNs = await GRN.find({ id: { $regex: `^GRN-${year}-` } }, { id: 1 }).lean();
-        const maxNum = yearGRNs.reduce((max, g) => {
-          const parts = (g.id || "").split("-");
-          const num = parseInt(parts[parts.length - 1] || "0");
-          return isNaN(num) ? max : Math.max(max, num);
-        }, 0);
-        const candidateId = `GRN-${year}-${String(maxNum + 1).padStart(3, "0")}`;
-        const exists = await GRN.findOne({ id: candidateId }, { id: 1 }).lean();
-        if (!exists) grnData.id = candidateId;
-        attempts++;
-      }
-      if (!grnData.id) throw new Error("Could not generate unique GRN ID");
+    // Always server-generate the GRN id from an atomic counter — never trust a
+    // client-supplied id (mirrors PO/MR), so a buggy frontend can't produce
+    // out-of-series ids.
+    const counterExists = await Counter.exists({ name: "GRN" });
+    if (!counterExists) {
+      // Bootstrap the counter from any pre-existing sequential GRN ids so we
+      // don't collide with legacy records. Upsert avoids a duplicate-key
+      // crash if two requests bootstrap concurrently.
+      const existing = await GRN.find({ id: { $regex: /^GRN-\d{4}-\d+$/ } }, { id: 1 }).lean();
+      const maxNum = existing.reduce((max, g) => {
+        const num = parseInt(g.id.split("-").pop(), 10);
+        return isNaN(num) ? max : Math.max(max, num);
+      }, 0);
+      await Counter.findOneAndUpdate(
+        { name: "GRN" },
+        { $setOnInsert: { seq: maxNum } },
+        { upsert: true }
+      );
     }
+    const year = new Date().getFullYear();
+    const seq = await getNextSequence("GRN");
+    grnData.id = `GRN-${year}-${seq}`;
     const grn = await GRN.create([grnData]);
     createdGrnId = grn[0].id;
     const inwardRecord = {
@@ -319,6 +324,10 @@ router.put("/:id", authenticate, async (req, res) => {
       };
     });
     grnData.items = sanitizedItems;
+    // Recompute status from actual received vs ordered quantities
+    const _hasShortage = sanitizedItems.some((it) => (it.received || 0) < (it.ordered || 0));
+    const _hasExcess   = sanitizedItems.some((it) => (it.received || 0) > (it.ordered || 0));
+    grnData.status = _hasShortage ? "Partial" : _hasExcess ? "Over-Received" : "Confirmed";
     // C3: Use oldStore for reversal, newStore for re-apply (prevents double-count when store changes)
     const oldStore = oldGRN.store;
     const newStore = grnData.store || oldGRN.store;
@@ -714,6 +723,62 @@ router.delete("/:id", authenticate, async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
+  }
+});
+// One-time migration: recompute status for all existing GRNs
+router.post("/migrate-status", authenticate, async (req, res) => {
+  try {
+    const roleLower = (req.user.role || "").toLowerCase();
+    if (!["super admin", "superadmin", "admin"].includes(roleLower)) {
+      return res.status(403).json({ success: false, message: "Super Admin only" });
+    }
+    const grns = await GRN.find({}, { id: 1, items: 1, status: 1 }).lean();
+    let updated = 0;
+    for (const grn of grns) {
+      const hasShortage = (grn.items || []).some((it) => (it.received || 0) < (it.ordered || 0));
+      const hasExcess   = (grn.items || []).some((it) => (it.received || 0) > (it.ordered || 0));
+      const newStatus   = hasShortage ? "Partial" : hasExcess ? "Over-Received" : "Confirmed";
+      if (newStatus !== grn.status) {
+        await GRN.updateOne({ id: grn.id }, { status: newStatus });
+        updated++;
+      }
+    }
+    broadcast({ type: "DATA_UPDATED", path: "grn" });
+    res.json({ success: true, message: `Migration complete. Updated ${updated} GRN(s).`, updated });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+// Renumber ALL GRNs from 1 ordered by createdAt (Super Admin only)
+router.post("/renumber", authenticate, async (req, res) => {
+  try {
+    const roleLower = (req.user.role || "").toLowerCase();
+    if (!["super admin", "superadmin", "admin"].includes(roleLower)) {
+      return res.status(403).json({ success: false, message: "Super Admin only" });
+    }
+    const allGRNs = await GRN.find({}).sort({ createdAt: 1 }).lean();
+    if (!allGRNs.length) return res.json({ success: true, message: "No GRNs found", updated: 0 });
+
+    const year = new Date().getFullYear();
+    let seq = 1;
+    for (const grn of allGRNs) {
+      const grnYear = grn.createdAt ? new Date(grn.createdAt).getFullYear() : year;
+      const newId = `GRN-${grnYear}-${seq}`;
+      const oldId = grn.id;
+      if (oldId !== newId) {
+        await GRN.updateOne({ _id: grn._id }, { id: newId });
+        await Inward.updateMany({ grnRef: oldId }, { grnRef: newId });
+        await Transaction.updateMany({ grnId: oldId }, { grnId: newId });
+      }
+      seq++;
+    }
+    // Reset counter so new GRNs continue from the last assigned number
+    await Counter.findOneAndUpdate({ name: "GRN" }, { seq: seq - 1 }, { upsert: true });
+    broadcast({ type: "DATA_UPDATED", path: "grn" });
+    broadcast({ type: "DATA_UPDATED", path: "inward" });
+    res.json({ success: true, message: `Renumbered ${allGRNs.length} GRN(s) from 1 to ${seq - 1}.`, updated: allGRNs.length });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 var stdin_default = router;

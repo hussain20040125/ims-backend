@@ -19,7 +19,7 @@ import { getNextSequence } from "./sequence.js";
 import { getRolesWithPermission, createNotification } from "./notification.js";
 import { triggerN8nWebhook } from "./webhook.js";
 import { broadcast } from "./broadcaster.js";
-import { PurchaseOrder, MaterialRequirement, Quotation, MRAllocation, Transaction } from "../models/index.js";
+import { PurchaseOrder, MaterialRequirement, Quotation, MRAllocation, Transaction, Settings } from "../models/index.js";
 import { POService } from "../services/po.service.js";
 import { logAudit } from "./audit.js";
 const cascadeDeleteMR = /* @__PURE__ */ __name(async (mrId) => {
@@ -229,6 +229,16 @@ const createCrudRoutes = /* @__PURE__ */ __name((router, model, resourceName, id
           if (!allowed && isApprovalL1 && await serverHasPermission(req.user, "APPROVE_PURCHASE_ORDER_L1")) allowed = true;
           if (!allowed && isApprovalL2 && await serverHasPermission(req.user, "APPROVE_PURCHASE_ORDER_L2")) allowed = true;
           if (!allowed && isApprovalL3 && await serverHasPermission(req.user, "APPROVE_PURCHASE_ORDER_L3")) allowed = true;
+          // Dynamic approver: user assigned in System Settings gets approval power automatically
+          if (!allowed && (isApprovalL1 || isApprovalL2 || isApprovalL3)) {
+            const cfg = await Settings.findOne({}, { approvers: 1 }).lean();
+            if (cfg?.approvers) {
+              const uid = req.user._id.toString();
+              if (isApprovalL1 && cfg.approvers.l1Id && cfg.approvers.l1Id === uid) allowed = true;
+              if (isApprovalL2 && cfg.approvers.l2Id && cfg.approvers.l2Id === uid) allowed = true;
+              if (isApprovalL3 && cfg.approvers.l3Id && cfg.approvers.l3Id === uid) allowed = true;
+            }
+          }
           if (!allowed && isAccountUpdate && (req.user.role === "Accountant" || req.user.role === "Finance Manager" || await serverHasPermission(req.user, "APPROVE_PURCHASE_ORDER_BILL"))) allowed = true;
           if (!allowed && isReject && await serverHasPermission(req.user, "REJECT_PURCHASE_ORDER")) allowed = true;
         }
@@ -319,6 +329,19 @@ const createCrudRoutes = /* @__PURE__ */ __name((router, model, resourceName, id
       const data = { ...req.body };
       delete data.__v;
       delete data._id;
+      // Freeze approver names when PO reaches final approval for the first time
+      if (resourceName === "pos" && data.status === "Approved" && oldItem.status !== "Approved") {
+        const settingsCfg = await Settings.findOne({}, { approvers: 1 }).lean();
+        if (settingsCfg?.approvers) {
+          const a = settingsCfg.approvers;
+          data.approverSnapshot = {
+            purchaseCoord: a.purchaseCoord || "", purchaseCoordTitle: a.purchaseCoordTitle || "",
+            l1: a.l1 || "", l1Title: a.l1Title || "",
+            l2: a.l2 || "", l2Title: a.l2Title || "",
+            l3: a.l3 || "", l3Title: a.l3Title || "",
+          };
+        }
+      }
       if (data.condition && typeof data.condition === "string") {
         data.condition = data.condition.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
       }

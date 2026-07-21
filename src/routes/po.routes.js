@@ -5,7 +5,7 @@ import { Router } from "express";
 import path from "path";
 import fs from "fs";
 import multer from "multer";
-import { PurchaseOrder, Quotation, MaterialRequirement, Supplier } from "../models/index.js";
+import { PurchaseOrder, Quotation, MaterialRequirement, Supplier, Settings } from "../models/index.js";
 import { authenticate, serverHasPermission } from "../middleware/auth.middleware.js";
 import { getRolesWithPermission, createNotification } from "../utils/notification.js";
 import { triggerN8nWebhook, sendSlackFile } from "../utils/webhook.js";
@@ -104,13 +104,25 @@ router.post("/", authenticate, async (req, res) => {
     const loadingTotal = calcCharge(data.loadingAmount || 0, data.loadingGstPct || 0, data.loadingGstType || "Exclusive");
     const unloadingTotal = calcCharge(data.unloadingAmount || 0, data.unloadingGstPct || 0, data.unloadingGstType || "Exclusive");
     const totalValue = itemsTotal + freightTotal + loadingTotal + unloadingTotal;
+    const settingsCfg = await Settings.findOne({}, { approvers: 1 }).lean();
+    const approverSnapshot = settingsCfg?.approvers ? {
+      purchaseCoord:      settingsCfg.approvers.purchaseCoord      || "",
+      purchaseCoordTitle: settingsCfg.approvers.purchaseCoordTitle || "",
+      l1:      settingsCfg.approvers.l1      || "",
+      l1Title: settingsCfg.approvers.l1Title || "",
+      l2:      settingsCfg.approvers.l2      || "",
+      l2Title: settingsCfg.approvers.l2Title || "",
+      l3:      settingsCfg.approvers.l3      || "",
+      l3Title: settingsCfg.approvers.l3Title || "",
+    } : undefined;
     const item = await PurchaseOrder.create({
       ...data,
       id: customId,
       totalValue,
       status: data.status || "Pending L1",
       createdBy: req.user.name,
-      date: data.date || (/* @__PURE__ */ new Date()).toISOString().split("T")[0]
+      date: data.date || (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+      ...(approverSnapshot ? { approverSnapshot } : {}),
     });
     // Link source quotation → set linkedPoId so only that quotation is locked
     if (data.quotationId) {
