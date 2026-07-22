@@ -51,7 +51,7 @@ router.get("/", authenticate, async (req, res) => {
       if (canApproveStore) {
         allowedStatuses.add("Store Pending");
       }
-      if (perms.includes("VIEW_MATERIAL_REQUIREMENT") || perms.includes("CREATE_MATERIAL_REQUIREMENT")) {
+      if (perms.includes("VIEW_MATERIAL_REQUIREMENT") || perms.includes("CREATE_MATERIAL_REQUIREMENT") || perms.includes("CREATE_PURCHASE_ORDER") || perms.includes("VIEW_PURCHASE_ORDERS") || perms.includes("EDIT_PURCHASE_ORDER")) {
         ["Quotation Phase", "Approved by AGM", "Approved by Director", "Allocated", "Partially Allocated", "Partially Issued", "Closed", "Fulfilled", "PO Created"].forEach((s) => allowedStatuses.add(s));
       }
       query.$or = [
