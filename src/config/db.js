@@ -156,6 +156,7 @@ async function connectDB() {
         "DELETE_STOCK_CHECK_REPORT",
         "VIEW_ACCOUNTS",
         "VERIFY_BILL",
+        "APPROVE_BILL",
         "REJECT_BILL",
         "MAKE_PAYMENT",
         "VIEW_PAYMENTS",
