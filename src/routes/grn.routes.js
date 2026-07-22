@@ -103,10 +103,19 @@ router.post("/", authenticate, async (req, res) => {
     // max before incrementing so it self-heals if it ever gets out of sync.
     const year = new Date().getFullYear();
     const existing = await GRN.find({ id: { $regex: /^GRN-\d{4}-\d+$/ } }, { id: 1 }).lean();
-    const maxNum = existing.reduce((max, g) => {
+    const maxGrnNum = existing.reduce((max, g) => {
       const n = parseInt(g.id.split("-").pop(), 10);
       return isNaN(n) ? max : Math.max(max, n);
     }, 0);
+    // Also guard against orphaned Transaction docs left behind by a prior
+    // renumber (their "TRX-GRN-<year>-<n>" id can collide with a fresh GRN
+    // even when no live GRN currently holds that number).
+    const existingTrx = await Transaction.find({ id: { $regex: /^TRX-GRN-\d{4}-\d+$/ } }, { id: 1 }).lean();
+    const maxTrxNum = existingTrx.reduce((max, t) => {
+      const n = parseInt(t.id.split("-").pop(), 10);
+      return isNaN(n) ? max : Math.max(max, n);
+    }, 0);
+    const maxNum = Math.max(maxGrnNum, maxTrxNum);
     // Atomically raise the counter to at least maxNum.
     // $max only updates if maxNum is greater than the current value; upsert creates it if missing.
     await Counter.findOneAndUpdate(
@@ -762,7 +771,10 @@ router.post("/renumber", authenticate, async (req, res) => {
       const oldId = grn.id;
       if (oldId !== newId) {
         await GRN.updateOne({ _id: grn._id }, { id: newId });
-        await Transaction.updateMany({ grnId: oldId }, { grnId: newId });
+        // Transactions reference their GRN via linkId (not grnId), and carry
+        // their own "TRX-<grnId>" id — both must be renamed in lockstep or
+        // the old id lingers and can collide with a future GRN reusing that number.
+        await Transaction.updateMany({ linkId: oldId }, { linkId: newId, id: `TRX-${newId}` });
       }
       // Always fix Inward: find by current grnRef (oldId) and update both grnRef AND id
       const inwards = await Inward.find({ grnRef: oldId }).lean();
